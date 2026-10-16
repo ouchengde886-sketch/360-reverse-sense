@@ -123,6 +123,8 @@ ONE_SHOT = os.path.join(HERE, "av_trust_one32.ps1")
 AVE_SCAN = os.path.join(HERE, "av_ave_scan32.ps1")
 # QVM AI 引擎（机器学习判定未知木马）
 QVM_INIT = os.path.join(HERE, "av_qvm32.ps1")
+# QEX 脚本查杀引擎（.ps1/.vbs/.js 等非 PE 脚本）
+QEX_PROBE = os.path.join(HERE, "av_qex32.ps1")
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -403,6 +405,54 @@ class AV360Sense:
                 return r
         return {"ok": False, "error": "no result", "raw": out[:400]}
 
+    def qex_create_instance(self, timeout=120) -> dict:
+        """创建 QEX 脚本查杀引擎实例。
+
+        QEX 是 360 的脚本查杀引擎，负责 .ps1/.vbs/.js 等非 PE 文件 ——
+        这正是 AVE 特征引擎覆盖不到的部分。
+
+        逆向得到的调用方式（QEX.dll）：
+            QEXCreateInstance(&GUID_A, &GUID_B, &out)   __stdcall 3 参数
+              GUID_A = adbba672-ea79-4b82-b442-31fc68de50f8  (RVA 0x1C2364)
+              GUID_B = d60137d0-b2db-4587-beb9-b3d08c571912  (RVA 0x1C2354)
+            参考 QEX.dll 内部 0x58B9 处的真实调用点。
+            成功后 out 指向对象，虚表 12 个方法，其中 [0x10] 为
+            FUN_10038e90(this, wchar_t* path, a2, a3)，内部调用
+            FUN_10038b30(path, a2, 7, ...) 做实际解析。
+
+        返回实例状态；判定结果字段 verdict 目前为 None ——
+        扫描方法的参数语义（a2/a3）尚未完全确定，见 README 已知限制。
+        """
+        if not os.path.exists(QEX_PROBE):
+            return {"ok": False, "error": "missing %s" % QEX_PROBE}
+        out = _run_ps32(QEX_PROBE, timeout=timeout)
+        sep = "\x1f"
+        for line in out.splitlines():
+            if line.startswith("QEX" + sep):
+                body = line.split(sep, 1)[1]
+                r = {"ok": False, "raw": body}
+                for kv in body.split(sep):
+                    if "=" not in kv:
+                        continue
+                    k, v = kv.split("=", 1)
+                    if k == "ok":
+                        r["ok"] = v == "1"
+                    elif k in ("obj", "vt", "base"):
+                        try:
+                            r[k] = int(v, 16)
+                        except ValueError:
+                            r[k] = v
+                    elif k == "methods":
+                        try:
+                            r[k] = int(v)
+                        except ValueError:
+                            r[k] = v
+                    else:
+                        r[k] = v
+                r["verdict"] = None
+                return r
+        return {"ok": False, "error": "no result", "raw": out[:400]}
+
     def scan_all_engines(self, path: str, timeout=180) -> dict:
         """多引擎联合查杀。
 
@@ -418,6 +468,10 @@ class AV360Sense:
         "扫描引擎: 360云查杀引擎 360启发式引擎 QEX脚本查杀引擎"
         以及每条威胁由哪个引擎判定。因此本方法将日志作为 official 通道，
         用于覆盖 AVE 不处理的非 PE 文件（脚本、压缩包等）。
+
+        注意：official 通道读的是**最近一次**官方扫描的结果，
+        不是即时查询 —— 新文件需先触发一次 360 扫描才会出现在日志里。
+        即时能力目前只有 ave 通道（仅 PE）。脚本文件的即时查杀见 scan_qex()。
         """
         out = {"path": os.path.abspath(path), "engines": {}}
         try:
@@ -448,6 +502,18 @@ class AV360Sense:
                 }
         except Exception as e:  # noqa: BLE001
             out["engines"]["official"] = {"ok": False, "error": str(e)}
+
+        # qex 通道：脚本查杀引擎实例（能创建实例，判定方法见 scan_qex 说明）
+        try:
+            q = self.qex_create_instance()
+            out["engines"]["qex"] = {
+                "ok": bool(q.get("ok")),
+                "verdict": None,
+                "note": "QEX 脚本引擎实例已创建（vtable 12 方法）",
+                "obj": q.get("obj"),
+            }
+        except Exception as e:  # noqa: BLE001
+            out["engines"]["qex"] = {"ok": False, "error": str(e)}
 
         verdicts = [v.get("verdict") for v in out["engines"].values() if v.get("verdict")]
         if "threat" in verdicts:

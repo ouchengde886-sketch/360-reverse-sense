@@ -22,6 +22,7 @@
 | 查询拦截状态 | `AV360Sense.state()` | ✅ 实测可用 |
 | 实时统一监听 | `AV360Sense.watch()` | ✅ 实测可用 |
 | QVM AI 引擎 | `AV360Sense.qvm_state()` | ⚠️ 初始化通，扫描入口未接 |
+| QEX 脚本引擎实例 | `AV360Sense.qex_create_instance()` | ⚠️ 实例创建通，判定方法未定 |
 
 ---
 
@@ -113,8 +114,18 @@ for ev in s.watch(seconds=30):         # 实时感知
 | `av360_sense.py` | 感知层 SDK（查杀/处理/感知/状态）|
 | `av_ave_scan32.ps1` | AVE 特征引擎调用器（32 位宿主）|
 | `av_qvm32.ps1` | QVM AI 引擎初始化 |
+| `av_qex32.ps1` | QEX 脚本引擎实例创建（GUID 工厂）|
 | `av_trust_one32.ps1` | 云端信誉查询 |
 | `引擎全景.ps1` | 20 个引擎组件清单与状态 |
+
+### 逆向辅助工具
+
+| 文件 | 说明 |
+|---|---|
+| `exports.py` | PE 导出表解析（含 forwarder 识别）|
+| `imports.py` | PE 导入表解析 |
+| `guidtable.py` | 从 PE 指定 RVA 读取 GUID 表 |
+| `strings.py` | UTF-16 / ASCII 字符串提取 |
 
 ### 文档
 
@@ -170,11 +181,39 @@ for ev in s.watch(seconds=30):         # 实时感知
 1. **QVM 扫描入口未接通**。`BoleInitialize` / `BoleFeaturesInitialize` 成功
    （拿到 12 + 21 个函数指针，版本 5），但 `CreateEnviroment` 在内部
    `FUN_10019d10` 处 AccessViolation，穷举 25 种参数组合均失败。
-2. **`official` 通道读的是最近一次官方扫描日志**，不是即时查询。
+2. **QEX 只接通了实例创建，没接通判定**。已用正确的 GUID 工厂调用
+   `QEXCreateInstance` 拿到实例（`rc=0`，虚表 12 个方法），并定位到
+   `[0x10] FUN_10038e90(this, wchar_t* path, a2, a3)` 是带路径参数的
+   扫描方法。但该方法对任意输入（含不存在的文件）都返回 0，且对象内
+   存变化与判定结果无对应关系 —— 判定结果很可能通过 `a2`/`a3` 指向的
+   结构体返回，其语义尚未确定。**因此脚本文件的即时查杀仍然依赖
+   `official` 通道（先触发 360 扫描再读日志）。**
+3. **`official` 通道读的是最近一次官方扫描日志**，不是即时查询。
    要判定新文件需先触发一次 360 扫描。AVE 通道才是即时调用（仅限 PE）。
-3. **威胁处理是自己实现的**，非调用 `360Quarant.dll`。效果等价，
+4. **威胁处理是自己实现的**，非调用 `360Quarant.dll`。效果等价，
    但恢复依赖 `_manifest.txt` 而非 360 GUI 的隔离区。
-4. 云引擎依赖网络连通。
+5. 云引擎依赖网络连通。
+
+### 关于 `DSFScan.dll!DSFStartScan`
+
+本项目的目标是接通 `DSFStartScan` 来驱动 360 自身扫描器，但逆向发现
+**它是个空壳**：
+
+```asm
+DSFStartScan:  33 c0 c2 04 00    xor eax,eax; ret 4   ; 恒返回 0，忽略参数
+DSFStopScan:   33 c0 c2 04 00    xor eax,eax; ret 4
+DSFCreate:     33 c0 c3          xor eax,eax; ret     ; 恒返回 0
+DSFRedirect:   33 c0 40 c3       xor eax,eax; inc eax; ret  ; 恒返回 1
+```
+
+`DSFScan.dll` 只导入系统 DLL（无 `AVEI.dll`/`QEX.dll`/`cloudsec3.dll`），
+真正的引擎编排在 `deepscan.dll`（`EngLib_Init`/`ScanAveMemory`/
+`Create360Object`）和 `Cloudsec3.dll`（`DSEngLib_Init`/`EngCreateObject`/
+`IsSupportFeature`）里。这两者已实测可调用（`DSEngLib_Init(0)=0`、
+`EngLib_Init(0)=0`），但它们的扫描对象创建仍需构造 COM 环境，
+成本高于直接调用 AVE 引擎。
+
+**结论：`DSFStartScan` 不是有效的接入点。**
 
 ---
 
