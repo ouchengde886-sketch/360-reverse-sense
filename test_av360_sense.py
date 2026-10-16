@@ -156,20 +156,31 @@ def test_scan_log_parsing():
     print("=" * 72)
 
     # 用真实日志样本验证解析器
-    sample = "\n".join([
-        "发现安全威胁: 2",
-        "已处理安全威胁: 2",
+    sample = "\r\n".join([
+        "360木马查杀扫描日志",
         "",
-        "[5050968] D:\\test\\evil.exe 00000000000000000000000000000000 "
-        "无效的注册表启动项 禁止自启动 处理成功 rule=-1,0,-1-1-2_0_0_1",
-        "[5050968] C:\\WINDOWS\\gna.sys 587255c4c0050ba58373f169701927c5 "
-        "建议禁止开机自动运行的程序 禁止自启动 处理成功 rule=30,3,30-1-2_0_0_1",
+        "开始时间: 2026-10-17 03:36:10",
+        "扫描类型: 自定义扫描",
+        "扫描引擎:360云查杀引擎（本地木马库）  360启发式引擎  QEX脚本查杀引擎 ",
+        "扫描文件数: 562",
+        "安全的文件数: 557",
+        "发现安全威胁: 2",
+        "已处理安全威胁: 0",
+        "",
+        "危险文件：2个",
+        "----------------------------------------------------------------",
+        "D:\\test\\evil.ps1 945a972d2072aa26f9698ae7c888aa69 "
+        "70,0,40,2065,256,1,100,0 ERT=2_0_0_1,23_100_2065_1 "
+        "[QEX引擎][木马-ex_virus.powershell.agent.bw][隔离文件][未处理]",
+        "D:\\test\\evil.exe 5b718721e66f0cc49d91e79ecc1c8622 "
+        "70,2,70,2000,256,1,100,0 ERT=2_0_0_1,11_100_2000_256 "
+        "[云安全引擎][木马-Generic/Trojan.Generic.HscASRMA][隔离文件][未处理]",
     ])
 
     tmpdir = tempfile.mkdtemp(prefix="av360test_")
     logpath = os.path.join(tmpdir, "360safeScanLog.txt")
-    with open(logpath, "w", encoding="utf-8") as f:
-        f.write(sample)
+    with open(logpath, "wb") as f:
+        f.write(sample.encode("utf-16"))
 
     s = A.AV360Sense()
     orig = A.SCAN_LOG
@@ -186,11 +197,17 @@ def test_scan_log_parsing():
     ok = False
     for e in events:
         print("    path    = %r" % e.path)
+        print("    engine  = %r" % e.extra.get("engine"))
+        print("    verdict = %r" % e.title)
         print("    action  = %r" % e.action)
-        print("    rule    = %r" % e.rule)
         print("    md5     = %r" % e.extra.get("md5"))
-        if e.path:
+        if e.path and e.extra.get("engine"):
             ok = True
+
+    eng = summ.get("engines") or []
+    print("  启用引擎: %s" % eng)
+    if len(eng) != 3:
+        ok = False
 
     print("\n  结论: %s" % ("查杀通知解析可用" if ok else "解析失败"))
     return ok
