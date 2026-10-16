@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 隔离区（运行时生成，内容随样本变化）
+_quarantine/
+_quarantine_test/
+
+# 临时/中间产物
+*.tmp
+*.bak
+.acl-reports/
+rea_out/
+static_out/
+
+# 逆向工具链（Ghidra + JDK，体积大且可重新下载）
+tools/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+Thumbs.db
+desktop.ini
+
+# 大体积中间文件（可按需保留）
+# all_binaries.txt
+# pe_report.json
+# static_report.txt

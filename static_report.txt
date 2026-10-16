@@ -1,0 +1,1186 @@
+﻿##############################################################################
+# 360 安全卫士 —— 外部接口 / 自保护 静态取证汇总
+##############################################################################
+
+==============================================================================
+## 360SelfProtection.sys   [x86]  206160 bytes
+   [内核自保护 API]
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+      IoRegisterShutdownNotification             注册关机通知
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360AntiHacker
+      \Device\360AntiHijack
+      \Device\360Camera
+      \Device\360HookPort
+      \Device\360SearchHotkey
+      \Device\360SelfProtection
+      \Device\360SpShadow0
+      \Device\360TdiFilter
+      \Device\BAPI
+      \Device\DsArk
+      \Device\EfiMon
+      \Device\Harddisk
+      \Device\HarddiskVolume1
+      \Device\IPFILTERDRIVER
+      \Device\Ip
+      \Device\LPT
+      \Device\LanmanRedirector
+      \Device\LanmanServer
+      \Device\MailSlot
+      \Device\MountPointManager
+      \Device\Mup
+      \Device\NamedPipe
+      \Device\Nsi
+      \Device\PhysicalMemory
+      \Device\Tcp
+      \Device\TermDD
+      \Device\WebDavRedirector
+      \Device\qutmipc
+   [符号链接 \DosDevices\*]
+      \DosDevices\360SelfProtection
+      \DosDevices\360SpShadow0
+      \DosDevices\COM
+   [内核对象路径]
+      \Driver\360AntiHacker
+      \Driver\360AntiHijack
+      \Driver\360Camera
+      \Driver\360netmon
+      \Driver\Afd
+      \Driver\BAPIDRV
+      \Driver\Disk
+      \Driver\DriverLife
+      \Driver\DsArk
+      \Driver\EfiMon
+      \Driver\FtDisk
+      \Driver\IPSec
+      \Driver\KWatch3
+      \Driver\PnpManager
+      \Driver\SNP2UVC
+      \Driver\SearchHotKey
+      \Driver\ahcache
+      \Driver\dmio
+      \Driver\qutmdserv
+      \Driver\qutmipc
+   [注册表路径]
+      \Registry\FileCache
+      \Registry\Machine\SOFTWARE\360Safe\safemon
+      \Registry\Machine\SOFTWARE\360Safe\softmgr\DisableSvc2
+      \Registry\Machine\SOFTWARE\Microsoft\EnterpriseCertificates\Disallowed
+      \Registry\Machine\SOFTWARE\Microsoft\SystemCertificates\Disallowed
+      \Registry\Machine\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+      \Registry\Machine\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\360Disabled
+      \Registry\Machine\SOFTWARE\Policies\Microsoft\SystemCertificates\Disallowed
+      \Registry\Machine\SYSTEM\CurrentControlSet\Control\Windows
+      \Registry\Machine\SYSTEM\CurrentControlSet\Control\hivelist
+      \Registry\Machine\SYSTEM\CurrentControlSet\Enum\SW\
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\360SelfProtection
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\HookPort
+      \Registry\Machine\SYSTEM\Select
+      \Registry\Machine\System\CurrentControlSet\Control
+      \Registry\Machine\System\CurrentControlSet\Services\
+   [GUID]
+      {6994ad05-93ef-11d0-a3cc-00a0c9223196}
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360SelfProtection_win10.sys   [x86]  206160 bytes
+   [内核自保护 API]
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+      IoRegisterShutdownNotification             注册关机通知
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360AntiHacker
+      \Device\360AntiHijack
+      \Device\360Camera
+      \Device\360HookPort
+      \Device\360SearchHotkey
+      \Device\360SelfProtection
+      \Device\360SpShadow0
+      \Device\360TdiFilter
+      \Device\BAPI
+      \Device\DsArk
+      \Device\EfiMon
+      \Device\Harddisk
+      \Device\HarddiskVolume1
+      \Device\IPFILTERDRIVER
+      \Device\Ip
+      \Device\LPT
+      \Device\LanmanRedirector
+      \Device\LanmanServer
+      \Device\MailSlot
+      \Device\MountPointManager
+      \Device\Mup
+      \Device\NamedPipe
+      \Device\Nsi
+      \Device\PhysicalMemory
+      \Device\Tcp
+      \Device\TermDD
+      \Device\WebDavRedirector
+      \Device\qutmipc
+   [符号链接 \DosDevices\*]
+      \DosDevices\360SelfProtection
+      \DosDevices\360SpShadow0
+      \DosDevices\COM
+   [内核对象路径]
+      \Driver\360AntiHacker
+      \Driver\360AntiHijack
+      \Driver\360Camera
+      \Driver\360netmon
+      \Driver\Afd
+      \Driver\BAPIDRV
+      \Driver\Disk
+      \Driver\DriverLife
+      \Driver\DsArk
+      \Driver\EfiMon
+      \Driver\FtDisk
+      \Driver\IPSec
+      \Driver\KWatch3
+      \Driver\PnpManager
+      \Driver\SNP2UVC
+      \Driver\SearchHotKey
+      \Driver\ahcache
+      \Driver\dmio
+      \Driver\qutmdserv
+      \Driver\qutmipc
+   [注册表路径]
+      \Registry\FileCache
+      \Registry\Machine\SOFTWARE\360Safe\safemon
+      \Registry\Machine\SOFTWARE\360Safe\softmgr\DisableSvc2
+      \Registry\Machine\SOFTWARE\Microsoft\EnterpriseCertificates\Disallowed
+      \Registry\Machine\SOFTWARE\Microsoft\SystemCertificates\Disallowed
+      \Registry\Machine\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+      \Registry\Machine\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\360Disabled
+      \Registry\Machine\SOFTWARE\Policies\Microsoft\SystemCertificates\Disallowed
+      \Registry\Machine\SYSTEM\CurrentControlSet\Control\Windows
+      \Registry\Machine\SYSTEM\CurrentControlSet\Control\hivelist
+      \Registry\Machine\SYSTEM\CurrentControlSet\Enum\SW\
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\360SelfProtection
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\HookPort
+      \Registry\Machine\SYSTEM\Select
+      \Registry\Machine\System\CurrentControlSet\Control
+      \Registry\Machine\System\CurrentControlSet\Services\
+   [GUID]
+      {6994ad05-93ef-11d0-a3cc-00a0c9223196}
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## qutmdrv.sys   [x86]  415552 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      PsSetCreateThreadNotifyRoutine             线程创建回调
+      PsSetLoadImageNotifyRoutine                模块加载回调（DLL注入检测）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoRegisterFsRegistrationChange             文件系统注册变更通知
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\MountPointManager
+      \Device\Mup
+      \Device\RawCdRom
+      \Device\RawDisk
+      \Device\Srv2
+      \Device\Video
+      \Device\XBS
+   [符号链接 \DosDevices\*]
+      \DosDevices\qutmdrv
+   [内核对象路径]
+      \Driver\HTCAND32
+      \Driver\VolSnap
+      \Driver\WinUsb
+      \Driver\atapi
+      \FileSystem\Filters\qutmdrv
+      \FileSystem\Fs_Rec
+      \FileSystem\MRxSmb
+      \FileSystem\Mup
+      \FileSystem\Npfs
+      \FileSystem\qutmdrv
+      \ObjectTypes\Key
+   [注册表路径]
+      \Registry\FileCache
+      \Registry\Machine\SOFTWARE\360Safe\Liveup\
+      \Registry\Machine\SOFTWARE\Classes
+      \Registry\Machine\SOFTWARE\Classes\HTTP\shell
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\lanmanserver\Shares
+      \Registry\Machine\Software
+      \Registry\Machine\Software\360Safe\safemon
+      \Registry\Machine\System\
+      \Registry\Machine\System\ControlSet
+      \Registry\Machine\System\ControlSet001\Enum
+      \Registry\Machine\System\CurrentControlSet
+      \Registry\Machine\System\CurrentControlSet\Services
+      \Registry\Machine\System\CurrentControlSet\Services\LanmanServer\Parameters
+      \Registry\Machine\System\CurrentControlSet\Services\Npfs\Aliases
+      \Registry\Machine\System\Select
+      \Registry\User\.Default
+   [GUID]
+      {3F966BD9-FA04-4EC5-991C-D326973B5128}
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## qutmdrv_win10.sys   [x86]  415552 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      PsSetCreateThreadNotifyRoutine             线程创建回调
+      PsSetLoadImageNotifyRoutine                模块加载回调（DLL注入检测）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoRegisterFsRegistrationChange             文件系统注册变更通知
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\MountPointManager
+      \Device\Mup
+      \Device\RawCdRom
+      \Device\RawDisk
+      \Device\Srv2
+      \Device\Video
+      \Device\XBS
+   [符号链接 \DosDevices\*]
+      \DosDevices\qutmdrv
+   [内核对象路径]
+      \Driver\HTCAND32
+      \Driver\VolSnap
+      \Driver\WinUsb
+      \Driver\atapi
+      \FileSystem\Filters\qutmdrv
+      \FileSystem\Fs_Rec
+      \FileSystem\MRxSmb
+      \FileSystem\Mup
+      \FileSystem\Npfs
+      \FileSystem\qutmdrv
+      \ObjectTypes\Key
+   [注册表路径]
+      \Registry\FileCache
+      \Registry\Machine\SOFTWARE\360Safe\Liveup\
+      \Registry\Machine\SOFTWARE\Classes
+      \Registry\Machine\SOFTWARE\Classes\HTTP\shell
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\lanmanserver\Shares
+      \Registry\Machine\Software
+      \Registry\Machine\Software\360Safe\safemon
+      \Registry\Machine\System\
+      \Registry\Machine\System\ControlSet
+      \Registry\Machine\System\ControlSet001\Enum
+      \Registry\Machine\System\CurrentControlSet
+      \Registry\Machine\System\CurrentControlSet\Services
+      \Registry\Machine\System\CurrentControlSet\Services\LanmanServer\Parameters
+      \Registry\Machine\System\CurrentControlSet\Services\Npfs\Aliases
+      \Registry\Machine\System\Select
+      \Registry\User\.Default
+   [GUID]
+      {3F966BD9-FA04-4EC5-991C-D326973B5128}
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## qutmipc.sys   [x86]  76840 bytes
+   [内核自保护 API]
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\exploitcap
+      \Device\qutmipc
+   [符号链接 \DosDevices\*]
+      \DosDevices\exploitcap
+      \DosDevices\qutmipc
+   [内核对象路径]
+      \Driver\Afd
+      \Driver\NDProxy
+      \FileSystem\Filters\qutmdrv
+      \FileSystem\qutmdrv
+   [注册表路径]
+      \Registry\Machine\System
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## qutmipc_win10.sys   [x86]  85472 bytes
+   [内核自保护 API]
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\exploitcap
+      \Device\qutmipc
+   [符号链接 \DosDevices\*]
+      \DosDevices\exploitcap
+      \DosDevices\qutmipc
+   [内核对象路径]
+      \Driver\Afd
+      \Driver\NDProxy
+      \FileSystem\Filters\qutmdrv
+      \FileSystem\qutmdrv
+   [注册表路径]
+      \Registry\Machine\System
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360FsFlt_win10.sys   [x64]  436784 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      PsSetCreateThreadNotifyRoutine             线程创建回调
+      PsSetLoadImageNotifyRoutine                模块加载回调（DLL注入检测）
+      ObRegisterCallbacks                        对象回调（句柄剥离，自保护核心）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      MmIsDriverVerifying                        驱动签名校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360SelfProtection
+      \Device\360SpShadow0
+      \Device\MountPointManager
+      \Device\Srv2
+      \Device\qutmipc
+   [符号链接 \DosDevices\*]
+      \DosDevices\360SelfProtection
+      \DosDevices\360SpShadow0
+      \DosDevices\qutmipc
+   [内核对象路径]
+      \FileSystem\MRxSmb
+      \FileSystem\Mup
+      \FileSystem\Npfs
+      \ObjectTypes\Key
+   [注册表路径]
+      \Registry\Machine\
+      \Registry\Machine\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+      \Registry\Machine\SOFTWARE\WOW6432NODE\Microsoft\Windows\CurrentVersion\Run
+      \Registry\Machine\SOFTWARE\Wow6432Node\360Safe\Liveup\
+      \Registry\Machine\SYSTEM\CurrentControlSet\Services\lanmanserver\Shares
+      \Registry\Machine\Software
+      \Registry\Machine\Software\Wow6432Node\360Safe\safemon
+      \Registry\Machine\Software\Wow6432Node\360safe
+      \Registry\Machine\System\
+      \Registry\Machine\System\ControlSet
+      \Registry\Machine\System\ControlSet001\Enum
+      \Registry\Machine\System\CurrentControlSet
+      \Registry\Machine\System\CurrentControlSet\Services
+      \Registry\Machine\System\CurrentControlSet\Services\LanmanServer\Parameters
+      \Registry\Machine\System\Select
+      \Registry\User\
+      \Registry\User\FileCache
+   [GUID]
+      {3F966BD9-FA04-4EC5-991C-D326973B5128}
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360AntiSteal.sys   [x86]  50760 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      IoCreateDevice                             创建设备对象
+      IoDeleteDevice                             删除设备
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360AntiHijack.sys   [x86]  95808 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      MmIsAddressValid                           内存校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+      IoRegisterShutdownNotification             注册关机通知
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360AntiHijack
+      \Device\360AntiHijackPacket
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\Ip
+   [符号链接 \DosDevices\*]
+      \DosDevices\360AntiHijack
+      \DosDevices\360AntiHijackPacket
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360AntiExploit.sys   [x86]  414424 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      PsSetLoadImageNotifyRoutine                模块加载回调（DLL注入检测）
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360AntiExploit
+      \Device\360HookPort
+      \Device\360SelfProtection
+   [符号链接 \DosDevices\*]
+      \DosDevices\360AntiExploit
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## hookport.sys   [x86]  75280 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      PsSetCreateThreadNotifyRoutine             线程创建回调
+      PsSetLoadImageNotifyRoutine                模块加载回调（DLL注入检测）
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      IoDeleteSymbolicLink                       删除符号链接
+      ZwOpenProcess                              打开进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      CreateProcess                              创建进程
+   [设备对象 \Device\*]
+      \Device\360HookPort
+   [符号链接 \DosDevices\*]
+      \DosDevices\360HookPort
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360disproc.sys   [x86]  77560 bytes
+   PE name: 360disproc.sys
+   [导出] _PsGetThreadProcessId@4
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      ObReferenceObjectByHandle                  按句柄引用对象
+      PsLookupProcessByProcessId                 按PID查进程
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\MountPointManager
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360Box.sys   [x86]  223296 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoDeleteDevice                             删除设备
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      SeSinglePrivilegeCheck                     权限检查
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+      IoRegisterShutdownNotification             注册关机通知
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360HookPort
+      \Device\360SelfProtection
+      \Device\DmControl
+      \Device\Harddisk
+      \Device\HarddiskVolumeShadowCopy
+      \Device\Ide
+      \Device\LanmanRedirector
+      \Device\Mup
+      \Device\NamedPipe
+      \Device\PhysicalMemory
+      \Device\Scsi
+      \Device\TermDD
+      \Device\WebDavRedirector
+      \Device\XBS
+   [内核对象路径]
+      \Driver\PnpManager
+      \FileSystem\Npfs
+      \ObjectTypes\Key
+   [注册表路径]
+      \Registry\A\
+      \Registry\Machine
+      \Registry\Machine\
+      \Registry\Machine\Software
+      \Registry\Machine\System\CurrentControlSet
+      \Registry\Machine\System\CurrentControlSet\
+      \Registry\Machine\System\CurrentControlSet\Control\IDConfigDB\
+      \Registry\Machine\System\CurrentControlSet\Services
+      \Registry\Machine\System\Select\
+      \Registry\User
+      \Registry\User\
+      \Registry\User\360SandBox
+      \Registry\User\360SandBox\H
+      \Registry\User\360SandBox\S
+      \Registry\User\360SandBox\T
+      \Registry\User\360Sandbox\Device\
+      \Registry\User\S-
+   [依赖 DLL] FLTMGR.SYS, HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## 360Box64.sys   [x64]  352344 bytes
+   [内核自保护 API]
+      PsSetCreateProcessNotifyRoutine            进程创建回调（可拦截进程启动）
+      ObRegisterCallbacks                        对象回调（句柄剥离，自保护核心）
+      ObOpenObjectByPointer                      按指针打开对象
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoDeleteDevice                             删除设备
+      ZwOpenProcess                              打开进程
+      ZwTerminateProcess                         结束进程
+      ZwAllocateVirtualMemory                    分配内存
+      PsLookupProcessByProcessId                 按PID查进程
+      PsGetProcessImageFileName                  取进程名
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+      IoRegisterShutdownNotification             注册关机通知
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      CreateProcess                              创建进程
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360Hvm
+      \Device\360SelfProtection
+      \Device\DmControl
+      \Device\Harddisk
+      \Device\HarddiskVolumeShadowCopy
+      \Device\Ide
+      \Device\LanmanRedirector
+      \Device\Mup
+      \Device\NamedPipe
+      \Device\Scsi
+      \Device\TermDD
+      \Device\WebDavRedirector
+      \Device\XBS
+   [内核对象路径]
+      \Driver\PnpManager
+      \Driver\ahcache
+      \FileSystem\Npfs
+      \ObjectTypes\Key
+   [注册表路径]
+      \Registry\A\
+      \Registry\A\_360SandBox
+      \Registry\Machine
+      \Registry\Machine\
+      \Registry\Machine\SOFTWARE\Classes\AppId
+      \Registry\Machine\SOFTWARE\Classes\PROTOCOLS
+      \Registry\Machine\SOFTWARE\Classes\Typelib
+      \Registry\Machine\SOFTWARE\Classes\Wow6432Node
+      \Registry\Machine\SOFTWARE\Classes\Wow6432Node\AppId
+      \Registry\Machine\SOFTWARE\Classes\Wow6432Node\PROTOCOLS
+      \Registry\Machine\SOFTWARE\Classes\Wow6432Node\Typelib
+      \Registry\Machine\SOFTWARE\Wow6432Node\Classes
+      \Registry\Machine\Software
+      \Registry\Machine\Software\Classes
+      \Registry\Machine\Software\Classes\Appid
+      \Registry\Machine\Software\Classes\Clsid
+      \Registry\Machine\Software\Classes\DirectShow
+      \Registry\Machine\Software\Classes\HCP
+      \Registry\Machine\Software\Classes\Interface
+      \Registry\Machine\Software\Classes\MediaFoundation
+      \Registry\Machine\Software\Clients
+      \Registry\Machine\Software\Microsoft\COM3
+      \Registry\Machine\Software\Microsoft\CTF\SystemShared
+      \Registry\Machine\Software\Microsoft\CTF\TIP
+      \Registry\Machine\Software\Microsoft\Cryptography\Calais\Current
+   [依赖 DLL] FLTMGR.SYS, ntoskrnl.exe
+
+==============================================================================
+## 360Camera.sys   [x86]  43952 bytes
+   [内核自保护 API]
+      ObReferenceObjectByHandle                  按句柄引用对象
+      IoCreateDevice                             创建设备对象
+      IoCreateSymbolicLink                       创建符号链接（外部可打开）
+      IoDeleteDevice                             删除设备
+      KeStackAttachProcess                       附加进程
+      MmIsAddressValid                           内存校验
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\360Camera
+      \Device\360SelfProtection
+   [符号链接 \DosDevices\*]
+      \DosDevices\360Camera
+   [依赖 DLL] HAL.dll, ntoskrnl.exe
+
+==============================================================================
+## SelfProtectAPI2.dll   [x86]  198888 bytes
+   PE name: SelfProtectAPI2.dll
+   [导出] APICreateObjectSelfProc, APIDisableSendInput, APIEnableSendInput, APILeaveSendInputControl, APIQueryCmrStreamStatus, APISetCmrStreamStatus, APISetTrayService, APIStartCmrMonitor, APIStartSendInputControl, APIStopCmrMonitor, IsWin10FakeDrvFWStat
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\360SpShadow0
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SHLWAPI.dll, USER32.dll, VERSION.dll, ole32.dll
+
+==============================================================================
+## 360SPTool.exe   [x86]  216296 bytes
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\qutmipc
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, CRYPT32.dll, IMM32.dll, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINTRUST.dll
+
+==============================================================================
+## 360Tray.exe   [x86]  607824 bytes
+   [内核自保护 API]
+      ZwProtectVirtualMemory                     改内存保护
+      ZwAllocateVirtualMemory                    分配内存
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\VBoxMiniRdrDN
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      3613DAE9-FDDD-4175-88B8-A492F651B7A9
+      5910B4B2-7F44-41af-B334-48F2B0239A5C
+      {1099D519-05E2-47e9-B669-413DDCD5D53D}
+      {7B2D27BC-4B03-4fb5-B5E4-73CBE648D584}
+      {BC4674F1-CC4F-47db-A8E1-500A1280006A}
+   [依赖 DLL] ADVAPI32.dll, COMCTL32.dll, IMM32.dll, IPHLPAPI.DLL, KERNEL32.dll, OLEAUT32.dll, POWRPROF.dll, RPCRT4.dll, SETUPAPI.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, USERENV.dll, VERSION.dll, WS2_32.dll, WTSAPI32.dll, ntdll.dll, ole32.dll
+
+==============================================================================
+## safemon.dll   [x86]  2262664 bytes
+   PE name: safemon.dll
+   [导出] DllCanUnloadNow, DllGetClassObject, DllRegisterServer, DllUnregisterServer, GetSafeVedioVersion, GetUrlSiteType, Initialize, IsInExplorer, IsTraystupidRealRunning, LogIEProtectInfo, SendCollectConfigInfo, SetMailGuardCallback, SetNetpayGuardState, SetSafeVedioVersion, SetWDPayProPopWndState, Start, StartF, Stop, Update, pcre_callout, pcre_compile, pcre_compile2, pcre_exec, pcre_free, pcre_malloc, pcre_stack_free, pcre_stack_malloc, safemon_100, safemon_101, safemon_102, safemon_103, safemon_104, safemon_105, safemon_106, safemon_107, safemon_108, safemon_109, safemon_110, safemon_111, safemon_112
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      SetWindowsHookEx                           装钩子
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      D27CDB6E-AE6D-11cf-96B8-444553540000
+      {CEA18E46-3491-43D1-BE73-768FFC3A34B3}
+   [依赖 DLL] ADVAPI32.dll, GDI32.dll, IPHLPAPI.DLL, KERNEL32.dll, NETAPI32.dll, OLEACC.dll, OLEAUT32.dll, PSAPI.DLL, RPCRT4.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WS2_32.dll, ole32.dll
+
+==============================================================================
+## 360hipsPopWnd.dll   [x86]  1446656 bytes
+   PE name: 360hipsPopWnd.dll
+   [导出] CreateTrayClient, Hips_CreateNotifyWnd, IsSupportNewIELock, IsSupportWndType, PreInit, RegClawPopWnd, Uninstall
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      SetWindowsHookEx                           装钩子
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      {36BBC96A-EC81-455D-96D1-4F0BB67B2686}
+      {7B2D27BC-4B03-4fb5-B5E4-73CBE648D584}
+      {8CF96769-047B-4265-A14A-54FE5F94BCAA}
+      {BC4674F1-CC4F-47db-A8E1-500A1280006A}
+   [依赖 DLL] ADVAPI32.dll, COMCTL32.dll, GDI32.dll, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, RPCRT4.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINSPOOL.DRV, gdiplus.dll, ole32.dll
+
+==============================================================================
+## 360GuardBase.dll   [x86]  230456 bytes
+   PE name: 360GuardBase.dll
+   [导出] GB_SetPayInsure, GetEntryInterface
+   [用户态关键 API]
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, KERNEL32.dll, OLEAUT32.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, ole32.dll
+
+==============================================================================
+## 360procmon.dll   [x86]  532616 bytes
+   PE name: 360procmon.dll
+   [导出] AddRuleTFW, BoxRule2HipsRule, BuildAndLoadRuleFile, CreateTrayClient, FixRegSrv, GetLogFileName, GetRuleInfo, InstallCall, Is360SafeUnique, IsSelfProtectOn, OffSelfProtect, OffSelfProtectEx, ReloadSelfProtectRule, SDRule2HipsRule, SectxRule2HipsRule, UninstallCall, VtIsWin64
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360HookPort
+      \\.\360SelfProtection
+      \\.\360TdiFilter
+      \\.\360qpesv
+      \\.\BAPI
+      \\.\qutmdrv
+      \\.\qutmipc
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      {360122FF-13C3-3f30-A177-3B9CA9BF7B33}
+      {7B2D27BC-4B03-4fb5-B5E4-73CBE648D584}
+      {BC4674F1-CC4F-47db-A8E1-500A1280006A}
+   [依赖 DLL] ADVAPI32.dll, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINTRUST.dll, ole32.dll
+
+==============================================================================
+## 360trayexit.dll   [x86]  250448 bytes
+   PE name: 360TrayExit.dll
+   [导出] ShowExitDlg, ShowExitDlgByNetPayFlag
+   [用户态关键 API]
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, GDI32.dll, KERNEL32.dll, OLEAUT32.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, ole32.dll
+
+==============================================================================
+## 360Quarant.dll   [x86]  699872 bytes
+   PE name: 360Quarant.dll
+   [导出] CreateQuarantFolder, CreateQuarantObject, DoCleanEPP, GetSectionItemCount, IsSupportFeature, Uninstall360SafeQuarant, UninstallQuarantItem, zip_close, zip_compression_method_supported, zip_discard, zip_encryption_method_supported, zip_error_code_system, zip_error_code_zip, zip_error_fini, zip_error_init, zip_error_init_with_code, zip_error_set, zip_error_set_from_source, zip_error_system_type, zip_error_to_data, zip_file_add, zip_file_attributes_init, zip_file_replace, zip_file_set_encryption, zip_get_name, zip_name_locate, zip_open, zip_open_from_source, zip_register_cancel_callback_with_state, zip_register_progress_callback, zip_register_progress_callback_with_state, zip_secure_random, zip_source_begin_write, zip_source_begin_write_cloning, zip_source_buffer, zip_source_buffer_create, zip_source_buffer_fragment, zip_source_buffer_fragment_create, zip_source_buffer_set_stream_callback, zip_source_close
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      3A8DB096-B573-4a62-97BD-52F6D41A0B40
+   [依赖 DLL] ADVAPI32.dll, KERNEL32.dll, NETAPI32.dll, OLEAUT32.dll, SHELL32.dll, SHLWAPI.dll, USERENV.dll, VERSION.dll, ole32.dll
+
+==============================================================================
+## DSMain.exe   [x86]  454888 bytes
+   [内核自保护 API]
+      ZwProtectVirtualMemory                     改内存保护
+      ZwAllocateVirtualMemory                    分配内存
+      ZwQuerySystemInformation                   查询系统信息（枚举进程/驱动）
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, IMM32.dll, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SHELL32.dll, SHLWAPI.dll, USER32.dll, USERENV.dll, VERSION.dll, ntdll.dll, ole32.dll
+
+==============================================================================
+## deepscan.dll   [x86]  3308288 bytes
+   PE name: deepscan.dll
+   [导出] ClearTDHQD, Create360Object, CreateQuarantObject, CreateQuarantObjectFactory, DSCreateOrUpdateTask, DSDeleteTaskByCom, DecRefats, DllRegisterServer, DllUnregisterServer, DsEmpEnum, DsEmpGetState, DsEmpIsSupported, DsEmpOpen, DsEmpRule, DsGetSetSuperKillerSuccFlag, DsRKM, DsSetScanItemSortList, EngLib_Init, EngSectionRestore, FixDkSec, GetDkSecStatus, GetModErrCode, GetModuleHandle64, GetThreadContext64, IsAutoRunFilePath, IsAutoRunReg, IsSupportFeature, LdrGetProcedureAddress64, LoadSkDataD, ReadProcessMemory64, ScanAveMemory, ScanAveMemoryWithCode, SetDsSrvExePath, SetDsSrvName, SetHijackEngIncludeMode, SetHijackExcludeOrIncludeSt, SetLastErrorFromX64Call, SetSpkByCk, SetThreadContext64, VirtualAllocEx64
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\BAPI
+      \Device\DsArk
+      \Device\LanmanRedirector
+      \Device\Mup
+      \Device\bapi
+      \Device\{167D29AC-C4DF-46F4-A73B-71AFE4BCE5ED}
+      \Device\{FD24BCA9-EE02-41F0-9DD5-13D570D8BC92}
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\BAPI
+      \\.\DeepATS
+      \\.\PhysicalDrive0
+      \\.\PhysicalDrive1
+      \\.\PhysicalDrive2
+      \\.\PhysicalDrive3
+      \\.\qutmipc
+   [内核对象路径]
+      \Driver\DsArk
+   [注册表路径]
+      \Registry\Machine
+      \Registry\Machine\
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      {00020D75-0000-0000-C000-000000000046}
+      {00021492-0000-0000-C000-000000000046}
+      {00021493-0000-0000-C000-000000000046}
+      {00021494-0000-0000-C000-000000000046}
+      {00028B00-0000-0000-C000-000000000046}
+      {06DA0625-9701-43DA-BFD7-FBEEA2180A1E}
+      {06DA0625-9701-43da-BFD7-FBEEA2180A1E}
+      {08244EE6-92F0-47F2-9FC9-929BAA2E7235}
+      {0997898B-0713-11D2-A4AA-00C04F8EEB3E}
+      {11dbb47c-a525-400b-9e80-a54615a090c0}
+      {1299CF18-C4F5-4B6A-BB0F-2299F0398E27}
+   [依赖 DLL] ADVAPI32.dll, CRYPT32.dll, IPHLPAPI.DLL, KERNEL32.dll, MPR.dll, NETAPI32.dll, OLEAUT32.dll, PSAPI.DLL, SETUPAPI.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINSPOOL.DRV, WLDAP32.dll, WS2_32.dll, WTSAPI32.dll, ntdll.dll, ole32.dll
+
+==============================================================================
+## avescan.dll   [x86]  117248 bytes
+   PE name: AveScan.dll
+   [导出] CreateADSAVEScanInstance, QueryFileInAVE, UpdateAVEng
+   [用户态关键 API]
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [依赖 DLL] ADVAPI32.dll, KERNEL32.dll, OLEAUT32.dll, SHLWAPI.dll, USER32.dll, ole32.dll
+
+==============================================================================
+## DSFScan.dll   [x86]  393128 bytes
+   PE name: DsFscan.dll
+   [导出] CreateObject, DSFCreate, DSFCreateNetEnvObj, DSFDestory, DSFDestoryNetEnvObj, DSFNetEnvCancel, DSFNetEnvCheck, DSFNetEnvErrCode, DSFNetEnvIsExistBlackNDIS, DSFNetEnvRmBlackNDIS, DSFRedirect, DSFStartScan, DSFStopScan, FixImageAndHostDeep
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\LanmanRedirector
+      \Device\Mup
+      \Device\Tcp
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      {4d36e974-e325-11ce-bfc1-08002be10318}
+      {A0972F10-452C-4cd1-904E-B50E394EDE34}
+   [依赖 DLL] ADVAPI32.dll, IPHLPAPI.DLL, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SETUPAPI.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WS2_32.dll, ole32.dll
+
+==============================================================================
+## CloudEngine.dll   [x86]  569824 bytes
+   PE name: CloudEngine.dll
+   [导出] Create360SafeEngine, CreateCloudEngine, CreateCloudEngineLocker, CreateFileReportLog, CreatePlugin2, CreatePlugin3, CreatePlugin4, CreatePlugin5, CreateQuarantine, CreateTrustZone, ForceMerge360Log, GetModErrCode, IsSupportFeature
+   [用户态关键 API]
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\qutmipc
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      {51FA7BCF-DF17-4b1a-8052-C4D98AA5F93D}
+      {AF868A92-0866-45d4-9BD8-A8EE2BB2033F}
+      {DCEC36FC-64A3-471f-9DEE-7D01310E1E2C}
+      {E7CF2847-EEE7-4dc3-9BD5-23902EBF1D89}
+   [依赖 DLL] ADVAPI32.dll, IPHLPAPI.DLL, KERNEL32.dll, OLEAUT32.dll, SETUPAPI.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINMM.dll, ole32.dll
+
+==============================================================================
+## cloudcom2.dll   [x86]  1853576 bytes
+   PE name: cloudcom2.dll
+   [导出] AVCacheClose, AVCacheCreate, AVCacheQuery, AVDeleteWhite, AVInsertWhite, AVNetQuery, AVNetQueryCancel, CacheClearOldData, CacheIsNeedClearOldData, CheckCloudServerState, CheckStreamTrust, Create360CommXClient, CreateObject, GetBest360Dns, GetDwordValue, GetFileTrustState, GetFileTrustStateEx, GetFileTrustStateEx2, GetFileTrustStateWithHandle, GetIspDns, GetStringValue, IsCahceTruested, IsSupportFeature, MisKillCheckDangerFileSignWhitList, MisKillClose, MisKillCreate, MisKillGetIsSystemFileName, MisKillJudgeWhite, MisKillJudgeWhiteEx, MisKillJudgeWhiteOnlyFile, QueryFileCancel, QueryFileClose, QueryFileCreate, QueryFilesEx, QueryFilesEx2, QueryFilesGetError, QueryFilesIsFileInXD, QueryFilesIsFileMD5InXD, QuerySetOption, RestoreDns
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      WaitForSingleObject                        等待对象
+   [设备对象 \Device\*]
+      \Device\Tcp
+      \Device\Udp
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, CRYPT32.dll, IPHLPAPI.DLL, KERNEL32.dll, OLEAUT32.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINMM.dll, WS2_32.dll, imagehlp.dll, ole32.dll
+
+==============================================================================
+## 360Safe.exe   [x86]  2180744 bytes
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      6a42e832-bf09-a8a7-172c-1de39f3d5034
+      7a42e832-bf09-a8a7-172c-1de39f3d5034
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      {0CF3482E-1C1B-45d2-BDA8-DE24E35177C4}
+      {1099D519-05E2-47e9-B669-413DDCD5D53D}
+      {1B52F5D0-1AC9-4923-885F-E1DC5C46E989}
+   [依赖 DLL] ADVAPI32.dll, COMCTL32.dll, CRYPT32.dll, GDI32.dll, IPHLPAPI.DLL, KERNEL32.dll, MSIMG32.dll, OLEAUT32.dll, PSAPI.DLL, RPCRT4.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, USERENV.dll, VERSION.dll, WININET.dll, WINTRUST.dll, WS2_32.dll, WTSAPI32.dll, gdiplus.dll, ole32.dll
+
+==============================================================================
+## uninst.exe   [x86]  1421056 bytes
+   [用户态关键 API]
+      DeviceIoControl                            设备IO控制（外部调用主通道）
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      Process32First                             枚举进程
+      Process32Next                              枚举进程
+      CreateToolhelp32Snapshot                   进程/模块快照
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      OpenSCManager                              打开服务管理器
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+      \\.\BAPI
+   [内核对象路径]
+      \KernelObjects\CritSecOutOfMemoryEvent
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+      618FBC66-CE56-4adb-96DB-3E9D2665626E
+   [依赖 DLL] ADVAPI32.dll, COMCTL32.dll, CRYPT32.dll, GDI32.dll, IPHLPAPI.DLL, KERNEL32.dll, OLEAUT32.dll, PSAPI.DLL, SETUPAPI.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WININET.dll, WINTRUST.dll, ole32.dll, urlmon.dll
+
+==============================================================================
+## 360AppLoader.exe   [x86]  494824 bytes
+   [用户态关键 API]
+      OpenProcess                                打开进程
+      TerminateProcess                           结束进程
+      RegOpenKeyEx                               打开注册表
+      RegSetValueEx                              写注册表
+      SetWindowsHookEx                           装钩子
+      LoadLibrary                                加载DLL
+      GetProcAddress                             取函数地址
+      ShellExecute                               启动外部程序
+      WaitForSingleObject                        等待对象
+   [DOS 路径 \\.\*]
+      \\.\360SelfProtection
+   [GUID]
+      1830B7BD-F7A3-4c4d-989B-C004DE465EDE
+   [依赖 DLL] ADVAPI32.dll, COMCTL32.dll, COMDLG32.dll, GDI32.dll, KERNEL32.dll, OLEAUT32.dll, SHELL32.dll, SHLWAPI.dll, USER32.dll, VERSION.dll, WINSPOOL.DRV, ole32.dll, oledlg.dll

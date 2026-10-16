@@ -1,0 +1,1034 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+360 感知层 SDK —— 免杀自动化测试的"眼睛"。
+
+设计目标（对应免杀自动化需求）：
+  1. 主动调用查杀   —— scan()        把样本交给 360 引擎判定
+  2. 感知主动防御弹窗 —— watch()       实时捕获 HIPS 拦截弹窗
+  3. 感知杀毒通知    —— watch()       实时捕获查杀命中/处理通知
+  4. 知道哪里被拦截  —— events()      结构化事件流（谁、什么、在哪、被怎么处理）
+
+逆向依据（详见 FINDINGS.md / 360逆向分析报告.md）：
+  * HIPS 弹窗窗口类 = Q360HIPSClass
+      - 360hipsPopWnd.dll 中 GetClassInfoW/RegisterClass 注册（RVA 0x2544）
+      - 同 DLL 还引用 Q360SafeMonClass（主窗口）
+  * 弹窗定义文件：%s\\360hipspopwnd\\popwnds\\*.xml
+  * 通知分发：Utils\\360MsgCenter.exe /NOTIFY=%d
+  * 查杀引擎：cloudcom2.dll!GetFileTrustState*（32 位宿主，单进程只能调一次）
+  * 扫描日志：%APPDATA%\\360Safe\\360ScanLog\\360safeScanLog.txt（明文）
+  * 拦截开关：HKLM\\SOFTWARE\\WOW6432Node\\360Safe\\safemon\\*Access
+  * 自保护设备：\\\\.\\360SelfProtection，IOCTL 0x22204C 查询 PID 保护
+
+用法（作为库）：
+    from av360_sense import AV360Sense
+    s = AV360Sense()
+    print(s.state())            # 当前拦截状态
+    print(s.scan(r"C:\\test.exe"))   # 主动查杀
+    for ev in s.watch(seconds=30):   # 实时感知
+        print(ev)
+
+用法（命令行）：
+    python av360_sense.py state                 # 打印拦截状态
+    python av360_sense.py scan <file>           # 主动查杀
+    python av360_sense.py watch --seconds 60    # 实时感知弹窗与通知
+    python av360_sense.py events --json         # 导出历史事件
+"""
+from __future__ import annotations
+
+import argparse
+import ctypes
+import ctypes.wintypes as wt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from typing import Iterator
+
+sys.stdout.reconfigure(encoding="utf-8")
+
+# ---------------------------------------------------------------- 常量
+
+SAFE_ROOT = r"C:\Program Files (x86)\360\360Safe"
+SNAP_ROOT = r"C:\Users\Administrator\Desktop\360Safe"
+
+# 引擎根目录候选（按优先级）：本机安装 > 快照副本
+ENGINE_ROOTS = [
+    r"C:\Program Files (x86)\360\360Safe",
+    r"C:\Program Files\360\360Safe",
+    r"C:\Users\Administrator\Desktop\360Safe",
+]
+
+
+def find_engine_root() -> str | None:
+    """定位可用的 360 引擎根目录。
+
+    优先使用**本机实际安装**的引擎（特征库最新、与运行中的
+    主动防御一致）；找不到时回退到离线快照副本。
+    """
+    for r in ENGINE_ROOTS:
+        if os.path.exists(os.path.join(r, "deepscan", "cloudcom2.dll")):
+            return r
+    return None
+
+
+APPDATA_360 = os.path.join(os.environ.get("APPDATA", ""), "360Safe")
+SCAN_LOG = os.path.join(APPDATA_360, "360ScanLog", "360safeScanLog.txt")
+LOGINFO_DIR = os.path.join(APPDATA_360, "LogInfo")
+PROGRAMDATA_360 = r"C:\ProgramData\360safe"
+
+# 逆向确认的窗口类名
+HIPS_POPUP_CLASS = "Q360HIPSClass"      # 主动防御拦截弹窗
+MAIN_WINDOW_CLASS = "Q360SafeMonClass"  # 360 主窗口
+NETMON_WINDOW_CLASS = "Q360NetmonMainWndClass"
+
+SAFEMON_KEY = r"SOFTWARE\WOW6432Node\360Safe\safemon"
+
+# 拦截开关 -> 中文含义
+ACCESS_FLAGS = {
+    "ExecAccess": "程序执行监控",
+    "MonAccess": "文件监控",
+    "FileMonAccess": "文件监控(细项)",
+    "AppMonAccess": "程序行为监控",
+    "DrvFWAccess": "驱动防火墙",
+    "DrvFWAccess2": "驱动防火墙(细项)",
+    "UDiskAccess": "U盘防护",
+    "IEProtAccess": "IE 防护",
+    "SiteAccess": "网站/网址防护",
+    "DnsMonAccess": "DNS 监控",
+    "VulnMonAccess": "漏洞监控",
+    "OutwardAtkMonAccess": "对外攻击监控",
+    "NetDefender": "网络防护",
+    "TpiDriverWorkOpen": "TPI 驱动工作开关",
+    "NewExec": "新程序执行监控",
+    "BitcoinMiner": "挖矿木马防护",
+    "flowstate": "流量状态",
+    "SB_State": "沙箱状态",
+    "svcMon": "服务监控",
+    "LockUnknown": "锁定未知程序",
+}
+
+IOCTL_IS_PID_PROTECTED = 0x22204C
+DEV_SELF_PROTECTION = r"\\.\360SelfProtection"
+
+# 引擎脚本（32 位宿主）
+PS32 = r"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+HERE = os.path.dirname(os.path.abspath(__file__))
+ONE_SHOT = os.path.join(HERE, "av_trust_one32.ps1")
+# 真正的病毒查杀引擎（AVEI.dll / AVEngine.dll）调用脚本
+AVE_SCAN = os.path.join(HERE, "av_ave_scan32.ps1")
+# QVM AI 引擎（机器学习判定未知木马）
+QVM_INIT = os.path.join(HERE, "av_qvm32.ps1")
+
+k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+k32.CreateFileW.restype = wt.HANDLE
+k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, ctypes.c_void_p,
+                            wt.DWORD, wt.DWORD, wt.HANDLE]
+k32.DeviceIoControl.restype = wt.BOOL
+k32.DeviceIoControl.argtypes = [wt.HANDLE, wt.DWORD, ctypes.c_void_p, wt.DWORD,
+                                ctypes.c_void_p, wt.DWORD, ctypes.POINTER(wt.DWORD),
+                                ctypes.c_void_p]
+k32.CloseHandle.argtypes = [wt.HANDLE]
+
+
+# ---------------------------------------------------------------- 事件模型
+
+@dataclass
+class Event:
+    """感知到的单个事件。"""
+    ts: float                       # unix 时间戳
+    kind: str                       # popup / scan_hit / state_change / process
+    source: str                     # 来源模块
+    title: str = ""                 # 弹窗标题 / 事件摘要
+    body: str = ""                  # 弹窗正文
+    path: str = ""                  # 涉及的文件路径
+    action: str = ""                # 处理动作（拦截/清除/放行/询问）
+    verdict: str = ""               # 判定（病毒/可疑/安全/未知）
+    rule: str = ""                  # 规则 ID
+    hwnd: int = 0                   # 窗口句柄（弹窗类事件）
+    extra: dict = field(default_factory=dict)
+
+    def to_dict(self):
+        return asdict(self)
+
+
+# ---------------------------------------------------------------- 引擎调用
+
+def _run_ps32(script: str, *args, timeout=120):
+    cmd = [PS32, "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", script, *args]
+    p = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=timeout)
+    return p.stdout or ""
+
+
+def _read_scan_log(log: str) -> str:
+    """读取 360 扫描日志。日志为 UTF-16LE（带 BOM），需显式解码。"""
+    try:
+        with open(log, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return ""
+    for enc in ("utf-16", "utf-8-sig", "gbk"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+class AV360Sense:
+    """360 感知层。"""
+
+    def __init__(self, safe_root: str | None = None):
+        # 默认自动探测本机安装的引擎；探测不到再用快照
+        self.safe_root = safe_root or find_engine_root() or SNAP_ROOT
+        self._seen_log_size = 0
+        self._seen_hwnds: set[int] = set()
+        self._popup_bodies: dict[int, str] = {}
+        self._events: list[Event] = []
+
+    # -------------------------------------------------- 状态感知
+
+    def state(self) -> dict:
+        """获取当前拦截/防护状态（对应"知道哪里被拦截"的静态部分）。"""
+        import winreg
+        flags = {}
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SAFEMON_KEY) as k:
+                i = 0
+                while True:
+                    try:
+                        name, val, _ = winreg.EnumValue(k, i)
+                    except OSError:
+                        break
+                    if name in ACCESS_FLAGS:
+                        flags[name] = {
+                            "meaning": ACCESS_FLAGS[name],
+                            "value": val,
+                            "on": bool(val) if isinstance(val, int) else None,
+                        }
+                    i += 1
+        except OSError:
+            pass
+
+        # 自保护设备
+        sp = {"device_openable": False, "self_pid_protected": None}
+        h = k32.CreateFileW(DEV_SELF_PROTECTION, 0x100081, 3, None, 3, 0x40000080, None)
+        if h != ctypes.c_void_p(-1).value:
+            sp["device_openable"] = True
+            try:
+                buf = ctypes.c_uint32(os.getpid())
+                out = ctypes.create_string_buffer(4)
+                ret = wt.DWORD(0)
+                ok = k32.DeviceIoControl(h, IOCTL_IS_PID_PROTECTED,
+                                         ctypes.byref(buf), 4, out, 4,
+                                         ctypes.byref(ret), None)
+                if ok:
+                    sp["self_pid_protected"] = bool(int.from_bytes(out.raw[:4], "little"))
+            finally:
+                k32.CloseHandle(h)
+
+        # 服务状态
+        svcs = {}
+        for s in ("ZhuDongFangYu", "360SelfProtection", "360FsFlt", "360AntiHijack"):
+            try:
+                p = subprocess.run(["sc", "query", s], capture_output=True,
+                                   text=True, timeout=10)
+                if "1060" in p.stdout:
+                    svcs[s] = "NOT_INSTALLED"
+                else:
+                    for line in p.stdout.splitlines():
+                        if "STATE" in line and ":" in line:
+                            svcs[s] = line.split(":", 1)[1].strip()
+            except Exception:  # noqa: BLE001
+                svcs[s] = "ERR"
+
+        return {
+            "intercept_flags": flags,
+            "enabled_count": sum(1 for v in flags.values() if v["on"]),
+            "disabled_count": sum(1 for v in flags.values() if v["on"] is False),
+            "self_protection": sp,
+            "services": svcs,
+        }
+
+    # -------------------------------------------------- 主动查杀
+
+    def scan(self, path: str, timeout=180) -> dict:
+        """主动调用 360 引擎查杀单个文件。
+
+        返回签名/证书链信息。注意引擎限制：
+          - 必须 32 位宿主
+          - 同一进程只能调用一次 -> 每次起独立进程
+        """
+        # 去掉可能的 BOM / 首尾空白（从文件列表读入时常见）
+        path = path.lstrip("\ufeff").strip().strip('"')
+        path = os.path.abspath(path)
+        if not os.path.exists(path):
+            return {"path": path, "ok": False, "error": "file not found"}
+        if not os.path.exists(ONE_SHOT):
+            return {"path": path, "ok": False, "error": "missing %s" % ONE_SHOT}
+
+        out = _run_ps32(ONE_SHOT, path, self.safe_root, timeout=timeout)
+        sep = "\x1f"
+        for line in out.splitlines():
+            if line.startswith("RESULT" + sep):
+                parts = line.split(sep)
+                if len(parts) >= 5:
+                    subject, issuer, ca = parts[2], parts[3], parts[4]
+                    return {
+                        "path": path,
+                        "ok": True,
+                        "signed": bool(subject.strip()),
+                        "subject": subject,
+                        "issuer": issuer,
+                        "ca": ca,
+                        "verdict": ("已签名: " + subject) if subject.strip() else "无签名",
+                    }
+        return {"path": path, "ok": False, "error": "no result", "raw": out[:400]}
+
+    def scan_many(self, paths, on_result=None) -> list[dict]:
+        """批量查杀（每文件独立进程）。"""
+        res = []
+        for i, p in enumerate(paths):
+            r = self.scan(p)
+            res.append(r)
+            if on_result:
+                on_result(i, len(paths), r)
+        return res
+
+    # -------------------------------------------------- 真实病毒查杀引擎
+
+    def scan_ave(self, path: str, timeout=180) -> dict:
+        """调用 360 真正的病毒查杀引擎（AVEI.dll）扫描单个文件。
+
+        与 scan() 的区别：
+          scan()      -> 只查签名/证书链信誉（cloudcom2）
+          scan_ave()  -> 真正加载特征库、解析 PE、做病毒比对
+
+        引擎限制（逆向得出，已在 av_ave_scan32.ps1 中处理）：
+          - 引擎是 x86，必须用 32 位 PowerShell 宿主
+          - 必须先 AveInitialize 取函数表，再加载 AVEI.dll
+          - 必须 SetScannerConfig 加载特征库，否则扫描被静默跳过
+          - 只接受合法 PE 文件；非 PE 返回 status=4
+
+        返回 dict:
+          ok       bool
+          verdict  'clean' | 'threat' | 'engine_error' | 'error' | 'invalid_args'
+          status   引擎原始状态码（0=干净 1=威胁 4=非PE）
+          name     威胁名称（threat 时有值）
+          detail   原始明细
+        """
+        path = path.lstrip("\ufeff").strip().strip('"')
+        path = os.path.abspath(path)
+        if not os.path.exists(path):
+            return {"path": path, "ok": False, "error": "file not found"}
+        if not os.path.exists(AVE_SCAN):
+            return {"path": path, "ok": False, "error": "missing %s" % AVE_SCAN}
+
+        out = _run_ps32(AVE_SCAN, path, self.safe_root, timeout=timeout)
+        sep = "\x1f"
+        for line in out.splitlines():
+            if line.startswith("RESULT" + sep):
+                parts = line.split(sep)
+                if len(parts) >= 4:
+                    verdict = parts[2]
+                    detail = parts[3] if len(parts) > 3 else ""
+                    r = {
+                        "path": path,
+                        "ok": verdict not in ("NO_ROOT", "NO_AVEI", "NO_EXPORT",
+                                              "CREATE_NULL", "EXC"),
+                        "verdict": verdict,
+                        "detail": detail,
+                    }
+                    m = re.search(r"status=(\d+)", detail)
+                    if m:
+                        r["status"] = int(m.group(1))
+                    m = re.search(r"name=(\S*)", detail)
+                    if m:
+                        r["name"] = m.group(1)
+                    m = re.search(r"size=(\d+)", detail)
+                    if m:
+                        r["size"] = int(m.group(1))
+                    m = re.search(r"cfg=([\d/]+)", detail)
+                    if m:
+                        r["cfg"] = m.group(1)
+                    return r
+        return {"path": path, "ok": False, "error": "no result", "raw": out[:400]}
+
+    def scan_ave_many(self, paths, on_result=None) -> list[dict]:
+        """用真实引擎批量查杀（每文件独立进程）。"""
+        res = []
+        for i, p in enumerate(paths):
+            r = self.scan_ave(p)
+            res.append(r)
+            if on_result:
+                on_result(i, len(paths), r)
+        return res
+
+    def qvm_state(self, timeout=120) -> dict:
+        """查询 QVM AI 引擎状态（机器学习引擎，判定未知木马）。
+
+        QVM 是 360 的机器学习引擎，特征库可绕过但 AI 判定很难绕过，
+        对免杀自动化对抗最有价值。
+        """
+        if not os.path.exists(QVM_INIT):
+            return {"ok": False, "error": "missing %s" % QVM_INIT}
+        out = _run_ps32(QVM_INIT, timeout=timeout)
+        sep = "\x1f"
+        for line in out.splitlines():
+            if line.startswith("QVM" + sep):
+                body = line.split(sep, 1)[1]
+                r = {"ok": True, "raw": body}
+                m = re.search(r"BoleInitialize=(\S+)", body)
+                if m:
+                    r["bole_init"] = m.group(1)
+                m = re.search(r"BoleFeaturesInitialize=(\S+)", body)
+                if m:
+                    r["features_init"] = m.group(1)
+                m = re.search(r"featPtrs=(\d+)", body)
+                if m:
+                    r["feature_ptrs"] = int(m.group(1))
+                m = re.search(r"table=([0-9a-fx,]+)", body)
+                if m:
+                    r["bole_table"] = [t for t in m.group(1).split(",") if t]
+                m = re.search(r"ver=0x([0-9A-Fa-f]+)", body)
+                if m:
+                    r["version"] = int(m.group(1), 16)
+                return r
+        return {"ok": False, "error": "no result", "raw": out[:400]}
+
+    def scan_all_engines(self, path: str, timeout=180) -> dict:
+        """多引擎联合查杀。
+
+        覆盖的引擎通道：
+          ave       —— AVE 特征引擎（本地木马库），直接调用 DLL，支持任意 PE
+          cloud     —— 云端信誉（GetFileTrustState 签名/信誉查询）
+          official  —— 360 官方扫描日志（含 QEX 脚本引擎 / 云安全引擎 /
+                       启发式引擎的判定与引擎归属）
+
+        official 通道说明：360 的多引擎编排由 deepscan.dll/DSFScan.dll 完成，
+        各引擎为独立 COM 组件，逐个手工初始化成本高且易错。
+        官方扫描日志是**权威且完整**的多引擎结果来源：它明确记录
+        "扫描引擎: 360云查杀引擎 360启发式引擎 QEX脚本查杀引擎"
+        以及每条威胁由哪个引擎判定。因此本方法将日志作为 official 通道，
+        用于覆盖 AVE 不处理的非 PE 文件（脚本、压缩包等）。
+        """
+        out = {"path": os.path.abspath(path), "engines": {}}
+        try:
+            out["engines"]["ave"] = self.scan_ave(path, timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            out["engines"]["ave"] = {"ok": False, "error": str(e)}
+        try:
+            out["engines"]["cloud"] = self.scan(path, timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            out["engines"]["cloud"] = {"ok": False, "error": str(e)}
+
+        # official 通道：从最近一次 360 官方扫描结果中查该文件
+        try:
+            ap = os.path.abspath(path).lower()
+            hits = [t for t in self.scan_log_threats()
+                    if t["path"].lower() == ap]
+            if hits:
+                h = hits[0]
+                out["engines"]["official"] = {
+                    "ok": True, "verdict": "threat",
+                    "engine": h["engine"], "name": h["verdict"],
+                    "action": h["action"], "handled": h["handled"],
+                }
+            elif self.scan_log_summary():
+                out["engines"]["official"] = {
+                    "ok": True, "verdict": "clean",
+                    "note": "不在最近一次官方扫描的威胁列表中",
+                }
+        except Exception as e:  # noqa: BLE001
+            out["engines"]["official"] = {"ok": False, "error": str(e)}
+
+        verdicts = [v.get("verdict") for v in out["engines"].values() if v.get("verdict")]
+        if "threat" in verdicts:
+            out["verdict"] = "threat"
+        elif "clean" in verdicts:
+            out["verdict"] = "clean"
+        elif verdicts:
+            out["verdict"] = verdicts[0]
+        else:
+            out["verdict"] = "unknown"
+        out["ok"] = any(v.get("ok") for v in out["engines"].values())
+        return out
+
+    # -------------------------------------------------- 处理威胁
+
+    def handle_threat(self, path: str, action: str = "quarantine",
+                      quarantine_dir: str | None = None,
+                      copy_only: bool = False) -> dict:
+        """处理查杀发现的威胁文件。
+
+        action:
+          'quarantine' 移入隔离目录（默认，可恢复，带 manifest）
+          'delete'     直接删除
+          'rename'     原地改名加 .vir 后缀（最保守）
+          'none'       只记录，不动文件
+
+        copy_only:
+          **测试专用**。True 时用"复制"代替"移动/删除"，
+          原文件保持不动。适合反复测试同一批样本，
+          避免第一次处理后就再也扫不到东西。
+
+        说明：360 的自我保护只拦截**对自身文件的写入**，
+        对普通被感染文件的删除/改名不受影响（已实测验证）。
+        360Quarant.dll 提供 CreateQuarantObject 做正规隔离，
+        但需要构造 COM 对象；此处用文件操作实现等价且可控的效果。
+        """
+        path = os.path.abspath(path.lstrip("\ufeff").strip().strip('"'))
+        if not os.path.exists(path):
+            return {"path": path, "ok": False, "error": "file not found"}
+
+        if action == "none":
+            return {"path": path, "ok": True, "action": "none"}
+
+        if quarantine_dir is None:
+            quarantine_dir = os.path.join(HERE, "_quarantine")
+
+        try:
+            if action == "delete":
+                if copy_only:
+                    # 测试模式：不真删，只记录
+                    return {"path": path, "ok": True, "action": "delete",
+                            "skipped": "copy_only"}
+                os.remove(path)
+                return {"path": path, "ok": True, "action": "delete"}
+
+            if action == "rename":
+                new = path + ".vir"
+                if os.path.exists(new):
+                    os.remove(new)
+                if copy_only:
+                    shutil.copy2(path, new)
+                    return {"path": path, "ok": True, "action": "rename",
+                            "to": new, "copied": True}
+                os.rename(path, new)
+                return {"path": path, "ok": True, "action": "rename", "to": new}
+
+            # quarantine
+            os.makedirs(quarantine_dir, exist_ok=True)
+            base = os.path.basename(path)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            new = os.path.join(quarantine_dir, "%s.%s.vir" % (base, stamp))
+            n = 1
+            while os.path.exists(new):
+                new = os.path.join(quarantine_dir, "%s.%s.%d.vir" % (base, stamp, n))
+                n += 1
+            if copy_only:
+                shutil.copy2(path, new)
+            else:
+                os.rename(path, new)
+            with open(os.path.join(quarantine_dir, "_manifest.txt"), "a",
+                      encoding="utf-8") as fh:
+                fh.write("%s\t%s\t%s\t%s\n"
+                         % (stamp, path, new, "copied" if copy_only else "moved"))
+            return {"path": path, "ok": True, "action": "quarantine",
+                    "to": new, "copied": copy_only}
+        except Exception as e:  # noqa: BLE001
+            return {"path": path, "ok": False, "error": str(e)}
+
+    def handle_scan_log(self, action: str = "quarantine",
+                        quarantine_dir: str | None = None,
+                        copy_only: bool = False,
+                        dry_run: bool = False) -> dict:
+        """处理最近一次 360 官方扫描发现的所有威胁。
+
+        这是 `scan-log` 之后"怎么处理病毒"的答案：
+        读取官方扫描日志里的威胁列表，逐个按 action 处理。
+
+        action / copy_only 含义同 handle_threat。
+        dry_run=True 只列出将要处理的文件，不动手。
+
+        返回 {"total":n, "handled":[...], "failed":[...], "skipped":[...]}
+        """
+        threats = self.scan_log_threats()
+        res = {"total": len(threats), "handled": [], "failed": [],
+               "skipped": [], "dry_run": dry_run}
+        for t in threats:
+            p = t["path"]
+            if dry_run:
+                res["skipped"].append({"path": p, "reason": "dry_run",
+                                       "engine": t["engine"],
+                                       "verdict": t["verdict"]})
+                continue
+            if not os.path.exists(p):
+                res["skipped"].append({"path": p, "reason": "not found"})
+                continue
+            h = self.handle_threat(p, action=action,
+                                   quarantine_dir=quarantine_dir,
+                                   copy_only=copy_only)
+            h["engine"] = t["engine"]
+            h["verdict"] = t["verdict"]
+            (res["handled"] if h.get("ok") else res["failed"]).append(h)
+        return res
+
+    def scan_and_handle(self, path: str, action: str = "quarantine",
+                        timeout=180, copy_only: bool = False) -> dict:
+        """查杀 + 按结果自动处理威胁（多引擎）。
+
+        copy_only=True 时只复制不移动，便于反复测试。
+        """
+        r = self.scan_all_engines(path, timeout=timeout)
+        if r.get("verdict") == "threat":
+            r["handled"] = self.handle_threat(path, action=action,
+                                              copy_only=copy_only)
+        return r
+
+    # -------------------------------------------------- 弹窗感知
+
+    def _enum_windows(self):
+        """枚举当前所有顶层窗口，返回 (hwnd, class, title)。"""
+        out = []
+
+        @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        def cb(hwnd, _):
+            cls = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, cls, 256)
+            title = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, title, 512)
+            out.append((hwnd, cls.value, title.value))
+            return True
+
+        user32.EnumWindows(cb, 0)
+        return out
+
+    def _window_text(self, hwnd) -> str:
+        """递归收集窗口内所有子控件文本（弹窗正文在里面）。"""
+        texts = []
+
+        @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        def cb(child, _):
+            buf = ctypes.create_unicode_buffer(1024)
+            user32.GetWindowTextW(child, buf, 1024)
+            if buf.value.strip():
+                texts.append(buf.value.strip())
+            return True
+
+        user32.EnumChildWindows(hwnd, cb, 0)
+        return "\n".join(texts)
+
+    def poll_popups(self) -> list[Event]:
+        """扫描当前存在的 HIPS 弹窗，返回新出现的弹窗事件。
+
+        弹窗的正文往往在窗口出现后若干毫秒才由 360 填入子控件，
+        因此这里对"已见但正文为空"的窗口做一次补读（enrich），
+        补读成功时产出补充事件，避免漏掉正文/路径/动作信息。
+
+        首次调用只建立基线，不产出事件。
+        """
+        events = []
+        alive = set()
+        for hwnd, cls, title in self._enum_windows():
+            if cls != HIPS_POPUP_CLASS:
+                continue
+            alive.add(hwnd)
+
+            if hwnd not in self._seen_hwnds:
+                self._seen_hwnds.add(hwnd)
+                body = self._window_text(hwnd)
+                self._popup_bodies[hwnd] = body
+                events.append(Event(
+                    ts=time.time(),
+                    kind="popup",
+                    source="360hipsPopWnd.dll",
+                    title=title or "360 主动防御拦截",
+                    body=body,
+                    hwnd=hwnd,
+                    action=self._guess_action(body),
+                    verdict=self._guess_verdict(body),
+                    path=self._guess_path(body),
+                ))
+                continue
+
+            # 已见窗口：若此前正文为空，尝试补读
+            prev = self._popup_bodies.get(hwnd, "")
+            if not prev:
+                body = self._window_text(hwnd)
+                if body:
+                    self._popup_bodies[hwnd] = body
+                    events.append(Event(
+                        ts=time.time(),
+                        kind="popup_detail",
+                        source="360hipsPopWnd.dll",
+                        title=title or "360 主动防御拦截",
+                        body=body,
+                        hwnd=hwnd,
+                        action=self._guess_action(body),
+                        verdict=self._guess_verdict(body),
+                        path=self._guess_path(body),
+                    ))
+
+        # 已关闭的窗口从"已见"集合移除，这样同一句柄被复用时仍能再次触发
+        self._seen_hwnds &= alive
+        for h in list(self._popup_bodies):
+            if h not in alive:
+                del self._popup_bodies[h]
+        return events
+
+    def prime_popups(self) -> int:
+        """建立弹窗基线：把当前已存在的 HIPS 弹窗标记为已见，返回数量。"""
+        cur = {h for h, c, _ in self._enum_windows() if c == HIPS_POPUP_CLASS}
+        self._seen_hwnds |= cur
+        for h in cur:
+            self._popup_bodies.setdefault(h, self._window_text(h))
+        return len(cur)
+
+    @staticmethod
+    def _guess_action(text: str) -> str:
+        for kw, act in (("拦截", "blocked"), ("阻止", "blocked"),
+                        ("允许", "allowed"), ("放行", "allowed"),
+                        ("清除", "cleaned"), ("删除", "deleted"),
+                        ("隔离", "quarantined"), ("信任", "trusted"),
+                        ("询问", "ask")):
+            if kw in text:
+                return act
+        return ""
+
+    @staticmethod
+    def _guess_verdict(text: str) -> str:
+        for kw, v in (("木马", "trojan"), ("病毒", "virus"),
+                      ("可疑", "suspicious"), ("风险", "risk"),
+                      ("广告", "adware"), ("蠕虫", "worm"),
+                      ("后门", "backdoor"), ("勒索", "ransomware")):
+            if kw in text:
+                return v
+        return ""
+
+    @staticmethod
+    def _guess_path(text: str) -> str:
+        m = re.search(r"[A-Za-z]:\\[^\r\n<>\"|?*]+", text)
+        return m.group(0).strip() if m else ""
+
+    # -------------------------------------------------- 查杀通知感知
+
+    def poll_scan_log(self) -> list[Event]:
+        """监控 360 扫描日志，捕捉查杀命中（含判定引擎）。"""
+        events = []
+        if not os.path.exists(SCAN_LOG):
+            return events
+        try:
+            size = os.path.getsize(SCAN_LOG)
+        except OSError:
+            return events
+        if size == self._seen_log_size:
+            return events
+        content = _read_scan_log(SCAN_LOG)
+        if not content:
+            return events
+        self._seen_log_size = size
+
+        # 真实日志行格式（实测，UTF-16LE）：
+        #   <路径> <md5> <数字串> ERT=... [引擎][病毒名][动作][处理状态]
+        for t in self.scan_log_threats():
+            events.append(Event(
+                ts=time.time(),
+                kind="scan_hit",
+                source="360ScanLog",
+                title=t["verdict"],
+                body="%s  [%s] %s" % (t["path"], t["engine"], t["verdict"]),
+                path=t["path"],
+                action=t["action"],
+                verdict=self._guess_verdict(t["verdict"]) or "risk",
+                rule="",
+                extra={"engine": t["engine"], "md5": t["md5"],
+                       "handled": t["handled"]},
+            ))
+        return events
+
+    def scan_log_summary(self) -> dict:
+        """解析扫描日志头部的统计信息与本次启用的引擎。"""
+        if not os.path.exists(SCAN_LOG):
+            return {}
+        txt = _read_scan_log(SCAN_LOG)
+        if not txt:
+            return {}
+        out = {}
+        m = re.search(r"发现安全威胁:\s*(\d+)", txt)
+        if m:
+            out["threats_found"] = int(m.group(1))
+        m = re.search(r"已处理安全威胁:\s*(\d+)", txt)
+        if m:
+            out["threats_handled"] = int(m.group(1))
+        m = re.search(r"扫描引擎[:：]\s*(.+)", txt)
+        if m:
+            out["engines"] = [e.strip() for e in m.group(1).split() if e.strip()]
+        m = re.search(r"扫描文件数:\s*(\d+)", txt)
+        if m:
+            out["files_scanned"] = int(m.group(1))
+        m = re.search(r"安全的文件数:\s*(\d+)", txt)
+        if m:
+            out["files_clean"] = int(m.group(1))
+        m = re.search(r"扫描模式:\s*(.+)", txt)
+        if m:
+            out["mode"] = m.group(1).strip()
+        return out
+
+    def scan_log_threats(self, path=None) -> list[dict]:
+        """解析 360 扫描日志中的逐条威胁记录，含**判定引擎**归属。
+
+        这是"多引擎"的真实证据来源：360 自己的日志会写明每条威胁
+        由哪个引擎判定（[QEX引擎] / [云安全引擎] / [启发式引擎] ...）。
+
+        返回每项：
+          path    被判定文件
+          md5     360 记录的 MD5
+          engine  判定引擎（QEX引擎 / 云安全引擎 / ...）
+          verdict 病毒名（如 木马-ex_virus.powershell.agent.bw）
+          action  建议动作（隔离文件 / 删除文件 ...）
+          handled 是否已处理
+        """
+        log = path or SCAN_LOG
+        if not os.path.exists(log):
+            return []
+        txt = _read_scan_log(log)
+        if not txt:
+            return []
+        out = []
+        # 形如: <路径> <md5> <数字串> ERT=... [引擎][病毒名][动作][处理状态]
+        pat = re.compile(
+            r"^(?P<path>[A-Za-z]:\\[^\s]+)\s+"
+            r"(?P<md5>[0-9a-fA-F]{32})\s+"
+            r"(?P<stats>[\d,]+)\s+"
+            r"(?P<ert>ERT=\S+)?\s*"
+            r"\[(?P<engine>[^\]]+)\]\s*"
+            r"\[(?P<verdict>[^\]]+)\]\s*"
+            r"\[(?P<action>[^\]]+)\]\s*"
+            r"\[(?P<handled>[^\]]+)\]",
+            re.MULTILINE)
+        for m in pat.finditer(txt):
+            d = m.groupdict()
+            out.append({
+                "path": d["path"],
+                "md5": d["md5"],
+                "engine": d["engine"],
+                "verdict": d["verdict"],
+                "action": d["action"],
+                "handled": d["handled"],
+            })
+        return out
+
+    def scan_log_latest(self) -> dict:
+        """返回最近一次扫描的完整结果（含逐条威胁与引擎归属）。"""
+        r = self.scan_log_summary()
+        r["threats"] = self.scan_log_threats()
+        return r
+
+    def scan_log_files(self) -> list[str]:
+        """列出全部历史扫描日志（按时间倒序）。"""
+        d = os.path.join(APPDATA_360, "360ScanLog")
+        if not os.path.isdir(d):
+            return []
+        fs = [os.path.join(d, n) for n in os.listdir(d)
+              if n.lower().endswith(".txt")]
+        fs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        return fs
+
+    # -------------------------------------------------- 进程感知
+
+    def poll_processes(self) -> list[Event]:
+        """感知 360 关键进程的启停（用于判断防护是否生效）。"""
+        events = []
+        try:
+            p = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                               capture_output=True, text=True, timeout=20)
+        except Exception:  # noqa: BLE001
+            return events
+        cur = set()
+        for line in p.stdout.splitlines():
+            parts = [x.strip('"') for x in line.split('","')]
+            if parts and any(k in parts[0].lower()
+                             for k in ("360", "zhudong", "q360")):
+                cur.add(parts[0].lower())
+        if not hasattr(self, "_proc_snapshot"):
+            self._proc_snapshot = cur
+            return events
+        for name in cur - self._proc_snapshot:
+            events.append(Event(ts=time.time(), kind="process",
+                                source="tasklist", title="进程启动",
+                                body=name, path=name, action="started"))
+        for name in self._proc_snapshot - cur:
+            events.append(Event(ts=time.time(), kind="process",
+                                source="tasklist", title="进程退出",
+                                body=name, path=name, action="stopped"))
+        self._proc_snapshot = cur
+        return events
+
+    # -------------------------------------------------- 统一监听
+
+    def watch(self, seconds=60, interval=0.5,
+              kinds=("popup", "scan_hit", "process")) -> Iterator[Event]:
+        """实时感知循环，逐条产出事件。
+
+        这是免杀自动化的核心：样本一跑，就能立刻知道
+        是否弹窗、是否被查杀、被谁拦、拦了什么。
+        """
+        end = time.time() + seconds
+        # 建立基线，避免把历史日志/历史弹窗当成新事件
+        self._seen_log_size = os.path.getsize(SCAN_LOG) if os.path.exists(SCAN_LOG) else 0
+        self.prime_popups()
+        self.poll_processes()
+
+        while time.time() < end:
+            got = []
+            if "popup" in kinds:
+                got += self.poll_popups()
+            if "scan_hit" in kinds:
+                got += self.poll_scan_log()
+            if "process" in kinds:
+                got += self.poll_processes()
+            for ev in got:
+                self._events.append(ev)
+                yield ev
+            time.sleep(interval)
+
+    def events(self) -> list[dict]:
+        return [e.to_dict() for e in self._events]
+
+
+# ---------------------------------------------------------------- CLI
+
+def main():
+    ap = argparse.ArgumentParser(description="360 感知层 SDK")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("state", help="打印当前拦截/防护状态")
+    sp = sub.add_parser("scan", help="主动查杀文件")
+    sp.add_argument("files", nargs="+")
+    sa = sub.add_parser("scan-all", help="多引擎联合查杀（AVE+云+官方引擎）")
+    sa.add_argument("files", nargs="+")
+    sl = sub.add_parser("scan-log", help="读取 360 官方扫描结果（含引擎归属）")
+    sl.add_argument("--json", action="store_true")
+    sh = sub.add_parser("handle", help="处理最近一次扫描发现的威胁")
+    sh.add_argument("--action", default="quarantine",
+                    choices=["quarantine", "delete", "rename", "none"])
+    sh.add_argument("--copy-only", action="store_true",
+                    help="测试用：只复制不移动，原文件保留")
+    sh.add_argument("--dry-run", action="store_true",
+                    help="只列出将处理的文件，不动手")
+    sh.add_argument("--dir", default=None, help="隔离目录")
+    sw = sub.add_parser("watch", help="实时感知弹窗与查杀通知")
+    sw.add_argument("--seconds", type=int, default=60)
+    sw.add_argument("--interval", type=float, default=0.5)
+    sw.add_argument("--json", action="store_true")
+
+    args = ap.parse_args()
+    s = AV360Sense()
+
+    if args.cmd == "state":
+        st = s.state()
+        print("=" * 70)
+        print("360 拦截状态")
+        print("=" * 70)
+        print("\n[拦截开关] 已开启 %d 项 / 已关闭 %d 项"
+              % (st["enabled_count"], st["disabled_count"]))
+        for k, v in st["intercept_flags"].items():
+            mark = "开" if v["on"] else "关"
+            print("  [%s] %-22s %s = %s" % (mark, k, v["meaning"], v["value"]))
+        print("\n[自我保护] %s" % json.dumps(st["self_protection"], ensure_ascii=False))
+        print("\n[服务状态]")
+        for k, v in st["services"].items():
+            print("  %-20s %s" % (k, v))
+        summ = s.scan_log_summary()
+        if summ:
+            print("\n[上次扫描] %s" % json.dumps(summ, ensure_ascii=False))
+
+    elif args.cmd == "scan":
+        for f in args.files:
+            r = s.scan(f)
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+
+    elif args.cmd == "scan-all":
+        for f in args.files:
+            r = s.scan_all_engines(f)
+            print("=" * 70)
+            print("文件: %s" % r["path"])
+            print("聚合判定: %s" % r["verdict"])
+            for k, v in r["engines"].items():
+                detail = v.get("engine") or v.get("name") or v.get("error") or ""
+                print("  [%-8s] %-12s %s" % (k, v.get("verdict", "-"), detail))
+
+    elif args.cmd == "scan-log":
+        r = s.scan_log_latest()
+        if args.json:
+            print(json.dumps(r, ensure_ascii=False, indent=2))
+        else:
+            print("=" * 70)
+            print("360 官方扫描结果")
+            print("=" * 70)
+            print("启用引擎: %s" % "  ".join(r.get("engines") or []))
+            print("扫描文件: %s  安全: %s  威胁: %s"
+                  % (r.get("files_scanned"), r.get("files_clean"),
+                     r.get("threats_found")))
+            th = r.get("threats") or []
+            if th:
+                print("\n逐条威胁（含判定引擎）:")
+                for t in th:
+                    print("  [%s] %s" % (t["engine"], t["verdict"]))
+                    print("        %s" % t["path"])
+
+    elif args.cmd == "handle":
+        r = s.handle_scan_log(action=args.action, quarantine_dir=args.dir,
+                              copy_only=args.copy_only, dry_run=args.dry_run)
+        print("=" * 70)
+        print("处理扫描发现的威胁")
+        print("=" * 70)
+        print("发现威胁: %d 个" % r["total"])
+        if r["dry_run"]:
+            print("\n[试运行] 将处理以下文件（未动手）:")
+            for x in r["skipped"]:
+                print("  [%s] %s" % (x.get("engine", "-"), x["path"]))
+        else:
+            if r["handled"]:
+                print("\n[已处理] %d 个:" % len(r["handled"]))
+                for h in r["handled"]:
+                    print("  [%s] %s" % (h.get("engine", "-"), h["path"]))
+                    if h.get("to"):
+                        print("        -> %s%s" % (h["to"],
+                              "  (原文件已保留)" if h.get("copied") else ""))
+            if r["failed"]:
+                print("\n[失败] %d 个:" % len(r["failed"]))
+                for h in r["failed"]:
+                    print("  %s  %s" % (h["path"], h.get("error")))
+            if r["skipped"]:
+                print("\n[跳过] %d 个:" % len(r["skipped"]))
+                for x in r["skipped"]:
+                    print("  %s  (%s)" % (x["path"], x.get("reason")))
+
+    elif args.cmd == "watch":
+        print("=" * 70)
+        print("360 感知层 —— 实时监听（%d 秒）" % args.seconds)
+        print("监听：主动防御弹窗 / 查杀通知 / 防护进程")
+        print("=" * 70)
+        n = 0
+        for ev in s.watch(seconds=args.seconds, interval=args.interval):
+            n += 1
+            if args.json:
+                print(json.dumps(ev.to_dict(), ensure_ascii=False))
+            else:
+                print("\n[%s] %s  (%s)"
+                      % (time.strftime("%H:%M:%S", time.localtime(ev.ts)),
+                         ev.kind, ev.source))
+                if ev.title:
+                    print("   标题: %s" % ev.title)
+                if ev.path:
+                    print("   路径: %s" % ev.path)
+                if ev.action:
+                    print("   动作: %s" % ev.action)
+                if ev.verdict:
+                    print("   判定: %s" % ev.verdict)
+                if ev.body:
+                    print("   正文: %s" % ev.body.replace("\n", " | ")[:300])
+        print("\n共捕获 %d 个事件。" % n)
+
+
+if __name__ == "__main__":
+    main()
