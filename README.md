@@ -365,6 +365,7 @@ selector 接口、真实文件读取全部有硬证据），
 | `test_false_negative.py` | **误报防护（不把无日志报成干净）** | 通过 |
 | `test_perception.py` | 感知通道实测 | 通过 |
 | `test_boundaries.py` | **保护边界复验（后缀 vs 占用）** | 7/7 |
+| `test_core_findings.py` | **核心结论复验（注入/网络/句柄旁路）** | 13/13 |
 
 ### 归档（`archive/`，不入库）
 
