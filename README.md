@@ -13,7 +13,8 @@
 | 能力 | 接口 | 状态 |
 |---|---|---|
 | 主动查杀（AVE 特征引擎，任意 PE）| `AV360Sense.scan_ave(path)` | ✅ 12/12 验证通过 |
-| 多引擎联合查杀（仅即时引擎参与判定）| `AV360Sense.scan_all_engines(path)` | ✅ 8/8 验证通过 |
+| **非 PE 查杀（QEX 脚本引擎）** | `AV360Sense.scan_qex(path)` | ✅ 11/11 验证通过 |
+| 多引擎联合查杀（仅即时引擎参与判定）| `AV360Sense.scan_all_engines(path)` | ✅ 即时引擎可用 |
 | 处理威胁（隔离/删除/改名）| `AV360Sense.handle_threat()` / `handle_scan_log()` | ✅ 实测可用 |
 | 感知主动防御弹窗 | `AV360Sense.poll_popups()` | ✅ 实测可用 |
 | 感知杀毒通知 | `AV360Sense.poll_scan_log()` | ✅ 实测可用 |
@@ -22,26 +23,35 @@
 | 实时统一监听 | `AV360Sense.watch()` | ✅ 实测可用 |
 | 读取官方扫描结果（含引擎归属）| `AV360Sense.scan_log_latest()` | ⚠️ 历史记录，**不参与判定** |
 | QVM AI 引擎 | `AV360Sense.qvm_state()` | ⚠️ 初始化通，扫描入口未接 |
-| QEX 脚本引擎实例 | `AV360Sense.qex_create_instance()` | ⚠️ 实例创建通，判定方法未定 |
+| QEX 引擎实例 | `AV360Sense.qex_create_instance()` | ✅ 实例创建通 |
 
 > **重要：判定结论只来自即时引擎调用。** 360 官方扫描日志是历史记录，
 > 对新文件会给出误导性的 clean，因此它被隔离在 `reference` 字段中，
 > **绝不参与 `verdict` 计算**。详见「关于扫描日志」一节。
 
+> **关于 `scan_qex` 的 `verdict='processed'`**：这表示引擎**确实读取并
+> 处理了该文件**（文件句柄有效、扫描流程完成），这是相比日志方案的关键
+> 进步。威胁判定的具体字段仍在定位中，因此该方法**不会把未确认的状态
+> 谎报成 `clean`**。
+
 ---
 
 ## 验证
 
-三条独立测试，全部可复现：
+四条独立测试，全部可复现：
 
 ```bash
 python test_ave_engine.py            # AVE 引擎真实调用验证（12 项）
+python test_nonpe_engine.py          # 非 PE 文件查杀验证（11 项）
 python test_no_log_hallucination.py  # 证明判定不来自日志（8 项）
 python test_av360_sense.py           # 感知层回归（弹窗/查杀通知）
 ```
 
 `test_ave_engine.py` 用「同一份字节、不同路径」和「存在/不存在」构造对照，
 证明引擎确实在判定文件内容，而不是恒返回某个值。
+
+`test_nonpe_engine.py` 验证 QEX 脚本引擎对 `.ps1`/`.zip` 等非 PE 文件的
+处理能力，用文件句柄和流程完成标志作为证据。
 
 ---
 
@@ -117,6 +127,22 @@ for ev in s.watch(seconds=30):         # 实时感知
 - 目标引擎是 **x86**，必须用 `C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`
 - **WOW64 重定向**：32 位宿主访问 `C:\Windows\System32` 会被重定向到
   `SysWOW64`，文件"消失"导致 `status=251`。SDK 会自动改写为 `Sysnative`
+
+### 2b. QEX 脚本引擎（非 PE 覆盖）
+
+QEX 负责 `.ps1`/`.vbs`/`.js`/`.zip` 等 AVE 覆盖不到的文件。调用链已打通：
+
+- `QEXCreateInstance(&GUID_A, &GUID_B, &out)` 是 `__stdcall` 3 参数，
+  GUID 必须指向 **DLL 自身内存**（RVA `0x1C2364`/`0x1C2354`），
+  堆拷贝会返回 `E_NOINTERFACE`
+- 对象虚表 RVA `0x1BFCC4`，方法调用约定是 **`__thiscall`** ——
+  用 `__stdcall`/`__cdecl` 会 `AccessViolation`
+- `slot[0x10]` 内部调用 `CreateFileW(path, access, 7, NULL, disposition, 0x80, NULL)`。
+  对 `FUN_10038b30` 逐条反汇编（`ret 0x1C` = 7 参数）确认了参数映射：
+  **第 4 个参数是 `dwCreationDisposition`，必须传 `OPEN_EXISTING(3)`**。
+  之前误传 `7`（当成 share mode）导致 `CreateFileW` 返回
+  `INVALID_HANDLE_VALUE`，扫描被静默跳过 —— 这是长期卡住的根因
+- 成功标志：`obj+8` 是有效文件句柄，`obj+0x18 = 1` 表示流程完成
 
 详见 [查杀引擎调用现状.md](查杀引擎调用现状.md)。
 

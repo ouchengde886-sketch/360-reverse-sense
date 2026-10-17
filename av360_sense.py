@@ -125,6 +125,7 @@ AVE_SCAN = os.path.join(HERE, "av_ave_scan32.ps1")
 QVM_INIT = os.path.join(HERE, "av_qvm32.ps1")
 # QEX 脚本查杀引擎（.ps1/.vbs/.js 等非 PE 脚本）
 QEX_PROBE = os.path.join(HERE, "av_qex32.ps1")
+QEX_SCAN = QEX_PROBE
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -446,12 +447,10 @@ class AV360Sense:
               GUID_A = adbba672-ea79-4b82-b442-31fc68de50f8  (RVA 0x1C2364)
               GUID_B = d60137d0-b2db-4587-beb9-b3d08c571912  (RVA 0x1C2354)
             参考 QEX.dll 内部 0x58B9 处的真实调用点。
-            成功后 out 指向对象，虚表 12 个方法，其中 [0x10] 为
-            FUN_10038e90(this, wchar_t* path, a2, a3)，内部调用
-            FUN_10038b30(path, a2, 7, ...) 做实际解析。
+            GUID 必须指向 DLL 自身内存，堆拷贝会返回 E_NOINTERFACE。
+            成功后 out 指向对象，虚表 RVA 0x1BFCC4（20+ 方法）。
 
-        返回实例状态；判定结果字段 verdict 目前为 None ——
-        扫描方法的参数语义（a2/a3）尚未完全确定，见 README 已知限制。
+        返回实例状态。要真正扫描文件请用 scan_qex()。
         """
         if not os.path.exists(QEX_PROBE):
             return {"ok": False, "error": "missing %s" % QEX_PROBE}
@@ -479,9 +478,65 @@ class AV360Sense:
                             r[k] = v
                     else:
                         r[k] = v
-                r["verdict"] = None
                 return r
         return {"ok": False, "error": "no result", "raw": out[:400]}
+
+    def scan_qex(self, path: str, timeout=120) -> dict:
+        """用 QEX 脚本查杀引擎处理单个文件（支持非 PE）。
+
+        这是 AVE 覆盖不到的部分：.ps1 / .vbs / .js / .zip 等。
+
+        逆向确认的调用链（机器码验证）：
+            slot[0x10] = FUN_10038e90(this, path, access, disposition)
+            内部 CreateFileW(path, access, 7, NULL, disposition, 0x80, NULL)
+            第 4 个参数是 dwCreationDisposition，必须传 OPEN_EXISTING(3)。
+            传错会导致 CreateFileW 返回 INVALID_HANDLE_VALUE，扫描被静默跳过。
+
+        返回 dict:
+          ok       引擎是否成功打开并处理了该文件
+          verdict  'processed'（引擎已处理）| 'not_opened'（未能打开）
+          handle   文件句柄
+          done     扫描流程完成标志
+          detail   原始明细
+
+        注意：verdict='processed' 表示**引擎确实读取并处理了这个文件**，
+        这是相比日志方案的关键进步。威胁判定的具体字段仍在定位中，
+        因此本方法不会把未确认的状态谎报成 'clean'。
+        """
+        path = path.lstrip("\ufeff").strip().strip('"')
+        real_path = _from_sysnative(path)
+        real_path = os.path.abspath(real_path)
+        if not os.path.exists(real_path):
+            return {"path": real_path, "ok": False, "error": "file not found"}
+        if not os.path.exists(QEX_SCAN):
+            return {"path": real_path, "ok": False, "error": "missing %s" % QEX_SCAN}
+
+        out = _run_ps32(QEX_SCAN, _to_sysnative(real_path), self.safe_root, timeout=timeout)
+        sep = "\x1f"
+        for line in out.splitlines():
+            if line.startswith("QEX" + sep):
+                body = line.split(sep, 1)[1]
+                r = {"path": real_path, "ok": False, "detail": body}
+                for kv in body.split(sep):
+                    if "=" not in kv:
+                        continue
+                    k, v = kv.split("=", 1)
+                    if k == "ok":
+                        r["ok"] = v == "1"
+                    elif k in ("handle",):
+                        try:
+                            r[k] = int(v, 16)
+                        except ValueError:
+                            r[k] = v
+                    elif k == "done":
+                        try:
+                            r[k] = int(v)
+                        except ValueError:
+                            r[k] = v
+                    else:
+                        r[k] = v
+                return r
+        return {"path": real_path, "ok": False, "error": "no result", "raw": out[:400]}
 
     def scan_all_engines(self, path: str, timeout=180) -> dict:
         """多引擎联合查杀 —— 全部为即时引擎调用。
@@ -512,13 +567,8 @@ class AV360Sense:
         except Exception as e:  # noqa: BLE001
             out["engines"]["cloud"] = {"ok": False, "error": str(e)}
         try:
-            q = self.qex_create_instance()
-            out["engines"]["qex"] = {
-                "ok": bool(q.get("ok")),
-                "verdict": None,
-                "note": "QEX 脚本引擎实例已创建（vtable 12 方法）",
-                "obj": q.get("obj"),
-            }
+            q = self.scan_qex(path, timeout=timeout)
+            out["engines"]["qex"] = q
         except Exception as e:  # noqa: BLE001
             out["engines"]["qex"] = {"ok": False, "error": str(e)}
 
@@ -529,6 +579,10 @@ class AV360Sense:
             out["verdict"] = "threat"
         elif "clean" in verdicts:
             out["verdict"] = "clean"
+        elif "processed" in verdicts:
+            # QEX 确认处理了文件，但威胁判定字段尚未完全确认。
+            # 不谎报 clean —— 如实标注为"已处理"。
+            out["verdict"] = "processed"
         else:
             out["verdict"] = "unknown"
         out["ok"] = any(v.get("ok") for v in out["engines"].values())

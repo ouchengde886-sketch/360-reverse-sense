@@ -1,21 +1,51 @@
-﻿# QEX 脚本查杀引擎 —— 实例创建与状态探测
-# 逆向结论（REA + Ghidra）：
-#   QEXCreateInstance(&GUID_A, &GUID_B, &out)  __stdcall 3 参数，返回 S_OK
-#     GUID_A = adbba672-ea79-4b82-b442-31fc68de50f8  (RVA 0x1C2364)
-#     GUID_B = d60137d0-b2db-4587-beb9-b3d08c571912  (RVA 0x1C2354)
-#     调用点参考 QEX.dll 内部 0x58B9 处的真实用法
-#   成功后 out 指向对象，虚表 12 个方法，其中：
-#     [0x10] RVA 0x38E90 = FUN_10038e90(this, wchar_t* path, a2, a3)
-#            内部调用 FUN_10038b30(path, a2, 7, ...) 做实际解析
-# 输出：QEX\x1fobj=0x...\x1fvt=0x...\x1fmethods=n\x1frc=0x...
+﻿# QEX 脚本查杀引擎 —— 真实调用（已验证可打开并处理非 PE 文件）
+#
+# ============================================================================
+# 逆向结论（全部经机器码验证，非推测）
+# ============================================================================
+#
+# 【1】QEXCreateInstance(&GUID_A, &GUID_B, &out)  __stdcall 3 参数
+#       GUID_A = adbba672-ea79-4b82-b442-31fc68de50f8  (RVA 0x1C2364)
+#       GUID_B = d60137d0-b2db-4587-beb9-b3d08c571912  (RVA 0x1C2354)
+#       返回 S_OK，out 指向对象，虚表 RVA 0x1BFCC4（20+ 方法）。
+#       注意：GUID 必须指向 DLL 自身内存，堆拷贝会返回 E_NOINTERFACE。
+#
+# 【2】对象虚表方法调用约定是 __thiscall（this 走 ECX）。
+#       用 __stdcall / __cdecl 会 AccessViolation。
+#
+# 【3】slot[0x10] = FUN_10038e90(this, path, access, disposition)
+#       内部:
+#         FUN_10039430()                              CloseHandle(obj+8)
+#         FUN_10038b30(path, access, 7, ecx, disposition, ...)  CreateFileW
+#       对 FUN_10038b30 的逐条反汇编（ret 0x1C = 7 参数）确认参数映射:
+#         param_1 = lpFileName
+#         param_2 = dwDesiredAccess      <- 必须 GENERIC_READ (0x80000000)
+#         param_3 = dwShareMode          <- 内部硬编码 7
+#         param_4 = lpSecurityAttributes <- NULL
+#         param_5 = dwCreationDisposition<- 由调用方的第 4 个参数传入
+#         param_6 = dwFlagsAndAttributes <- 内部硬编码 0x80
+#         param_7 = hTemplateFile        <- NULL
+#       **关键**：第 4 个参数是 dwCreationDisposition，必须传
+#       OPEN_EXISTING (3)。之前传 7（误当 share mode）导致
+#       CreateFileW 返回 INVALID_HANDLE_VALUE，扫描被静默跳过。
+#
+# 【4】成功标志：调用后 obj+8 是有效文件句柄（非 0xFFFFFFFF），
+#       obj+0x18 = 1 表示扫描流程完成。
+#
+# 已验证：对 .ps1 / .zip 等非 PE 文件，句柄正常打开，流程正常完成。
+# ============================================================================
 
-$root = 'C:\Program Files (x86)\360\360Safe'
+param([string]$Target, [string]$Root)
+
 $sep = [char]0x1f
+if (-not $Root) { $Root = 'C:\Program Files (x86)\360\360Safe' }
+# 无目标时退化为"仅创建实例"探测模式（供 qex_create_instance 使用）
+$probeOnly = [string]::IsNullOrEmpty($Target)
 
 $sig = @"
 using System;
 using System.Runtime.InteropServices;
-public static class QexProbe {
+public static class QexScanLib {
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode, EntryPoint="SetDllDirectoryW")]
   public static extern bool SetDllDirectoryW(string p);
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode, EntryPoint="LoadLibraryW")]
@@ -26,62 +56,91 @@ public static class QexProbe {
   public static extern IntPtr GetProcAddress(IntPtr h, string n);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)]
   public delegate int CreateFn(IntPtr a, IntPtr b, IntPtr c);
+  [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+  public delegate int ScanFn(IntPtr self, IntPtr path, IntPtr access, IntPtr disposition);
 }
 "@
 Add-Type -TypeDefinition $sig -ErrorAction Stop
 
-[void][QexProbe]::SetDllDirectoryW((Join-Path $root 'deepscan\qex'))
+[void][QexScanLib]::SetDllDirectoryW((Join-Path $Root 'deepscan\qex'))
 foreach ($d in @('360Base.dll', 'deepscan\BAPI.dll', 'deepscan\qex\QEX.dll')) {
-  $p = Join-Path $root $d
-  if (Test-Path $p) { [void][QexProbe]::LoadLibraryW($p) }
+  $p = Join-Path $Root $d
+  if (Test-Path $p) { [void][QexScanLib]::LoadLibraryW($p) }
 }
-$h = [QexProbe]::GetModuleHandleW('qex.dll')
+$h = [QexScanLib]::GetModuleHandleW('qex.dll')
 if ($h -eq [IntPtr]::Zero) {
-  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=load_failed")
-  exit 0
+  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=load_failed"); exit 0
 }
 $rd = [System.Runtime.InteropServices.Marshal]
 $base = $h.ToInt64()
 
 $out = $rd::AllocHGlobal(256)
 for ($i = 0; $i -lt 256; $i++) { $rd::WriteByte($out, $i, 0) }
-
-$pCreate = [QexProbe]::GetProcAddress($h, 'QEXCreateInstance')
+$pCreate = [QexScanLib]::GetProcAddress($h, 'QEXCreateInstance')
 if ($pCreate -eq [IntPtr]::Zero) {
-  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=no_export")
-  exit 0
+  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=no_export"); exit 0
 }
-$f = $rd::GetDelegateForFunctionPointer($pCreate, [QexProbe+CreateFn])
+$fCreate = $rd::GetDelegateForFunctionPointer($pCreate, [QexScanLib+CreateFn])
 $rc = -1
 try {
-  $rc = $f.Invoke([IntPtr]($base + 0x1C2364), [IntPtr]($base + 0x1C2354), $out)
+  $rc = $fCreate.Invoke([IntPtr]($base + 0x1C2364), [IntPtr]($base + 0x1C2354), $out)
 } catch {
-  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=exception")
-  exit 0
+  Write-Output ("QEX" + $sep + "ok=0" + $sep + "err=create_exception"); exit 0
 }
 $obj = $rd::ReadIntPtr($out, 0)
+if ($obj -eq [IntPtr]::Zero) {
+  Write-Output ("QEX" + $sep + "ok=0" + $sep +
+                ("rc=0x{0:X8}" -f ([int]$rc -band 0xFFFFFFFF)) + $sep + "err=null_obj")
+  exit 0
+}
+$vt = $rd::ReadIntPtr($obj, 0)
 
-$methods = 0
-$vtAddr = 0
-$okFlag = 0
-if ($obj -ne [IntPtr]::Zero) {
-  $vt = $rd::ReadIntPtr($obj, 0)
-  $vtAddr = $vt.ToInt64()
-  for ($i = 0; $i -lt 12; $i++) {
-    $fn = $rd::ReadIntPtr($vt, $i * 4)
-    if ($fn -ne [IntPtr]::Zero) { $methods++ }
+# ---- 探测模式：只报告实例信息，不扫描 ----
+if ($probeOnly) {
+  $methods = 0
+  for ($i = 0; $i -lt 32; $i++) {
+    $f2 = $rd::ReadIntPtr($vt, $i * 4)
+    if ($f2 -ne [IntPtr]::Zero) { $methods++ } else { break }
   }
-  if ([int]$rc -eq 0) { $okFlag = 1 }
+  Write-Output ("QEX" + $sep + "ok=1" + $sep +
+                ("rc=0x{0:X8}" -f ([int]$rc -band 0xFFFFFFFF)) + $sep +
+                ("obj=0x{0:X}" -f $obj.ToInt64()) + $sep +
+                ("vt=0x{0:X}" -f $vt.ToInt64()) + $sep +
+                "methods=" + $methods + $sep + ("base=0x{0:X}" -f $base))
+  $rd::FreeHGlobal($out)
+  exit 0
 }
 
-$parts = @(
-  "QEX",
-  "ok=$okFlag",
-  ("rc=0x{0:X8}" -f ([int]$rc -band 0xFFFFFFFF)),
-  ("obj=0x{0:X}" -f $obj.ToInt64()),
-  ("vt=0x{0:X}" -f $vtAddr),
-  "methods=$methods",
-  ("base=0x{0:X}" -f $base)
-)
-Write-Output ($parts -join $sep)
+# 关键：第 4 个参数必须是 OPEN_EXISTING(3)，不是 share mode
+$GENERIC_READ  = [IntPtr][int]0x80000000
+$OPEN_EXISTING = [IntPtr]3
+
+$pathPtr = $rd::StringToHGlobalUni($Target)
+$slotRc = "n/a"
+$opened = 0
+try {
+  $fn = $rd::ReadIntPtr($vt, 0x10)
+  if ($fn -ne [IntPtr]::Zero) {
+    $scan = $rd::GetDelegateForFunctionPointer($fn, [QexScanLib+ScanFn])
+    $slotRc = $scan.Invoke($obj, $pathPtr, $GENERIC_READ, $OPEN_EXISTING)
+    $handle = $rd::ReadInt32($obj, 8)
+    if ($handle -ne -1 -and $handle -ne 0) { $opened = 1 }
+  }
+} catch {
+  $slotRc = "EXC"
+}
+
+$handleV = $rd::ReadInt32($obj, 8)
+$done = $rd::ReadInt32($obj, 0x18)
+
+# verdict: 目前只能确定"引擎已处理该文件"。
+# 威胁判定字段仍在定位中（obj+0x1C 指向结果对象，其 +0x38/+0x3C
+# 在恶意与干净样本间有差异，但尚未确认语义），因此不谎报 clean。
+$verdict = if ($opened -eq 1) { "processed" } else { "not_opened" }
+
+Write-Output ("QEX" + $sep + "ok=" + $opened + $sep + "verdict=" + $verdict + $sep +
+              "slot10rc=" + $slotRc + $sep +
+              ("handle=0x{0:X8}" -f $handleV) + $sep + "done=" + $done)
+
+$rd::FreeHGlobal($pathPtr)
 $rd::FreeHGlobal($out)
