@@ -1121,6 +1121,116 @@ class AV360Sense:
         fs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         return fs
 
+    # -------------------------------------------------- 双通道判定
+
+    def scan_verdict(self, target: str | None = None,
+                     since: float | None = None) -> dict:
+        """★ 双通道判定：区分"扫描执行了"与"结果可读"。
+
+        **为什么需要这个**：实测发现 360 的右键扫描有两条内部路径 ——
+        一条写完整格式 A 日志（可读出威胁名与引擎归属），
+        另一条只更新 ScanCache（**只能证明扫描跑过，不能证明结果是干净的**）。
+
+        因此"ScanCache 变了但没有日志" **不等于** "没有威胁"。
+        本方法把这个区分显式化，避免自动化脚本把"无日志"误判为"干净"。
+
+        参数：
+          target  只统计扫描目标包含该字符串的日志（None = 不筛选）
+          since   只统计 mtime 晚于该时间戳的日志（None = 不筛选）
+
+        返回：
+          verdict_source  "log"       有日志，结果可读（最强证据）
+                          "cache_only" 只有 ScanCache 变化，结果不可读
+                          "none"       两者都无变化，扫描未执行
+          log_available   布尔，是否有可读日志
+          clean_known     布尔，**是否可确定地判定为干净**
+                          （只有 verdict_source=="log" 且 threats==0 时才为 True）
+          threats         本次日志中的威胁列表
+          scans           匹配到的扫描记录
+          cache_changed   ScanCache 是否在 since 之后变化
+          note            人类可读的结论说明
+        """
+        out = {
+            "target": target,
+            "verdict_source": "none",
+            "log_available": False,
+            "clean_known": False,
+            "threats": [],
+            "scans": [],
+            "cache_changed": False,
+            "note": "",
+        }
+
+        # --- 通道 1：日志 ---
+        scans = []
+        for rec in self.scan_log_history():
+            if since is not None:
+                try:
+                    if os.path.getmtime(rec["path"]) < since:
+                        continue
+                except OSError:
+                    continue
+            if target:
+                tgt = (rec.get("target") or "").replace("/", "\\").lower()
+                if target.replace("/", "\\").lower().rstrip("\\") not in tgt:
+                    continue
+            scans.append(rec)
+        out["scans"] = scans
+
+        if scans:
+            out["log_available"] = True
+            out["verdict_source"] = "log"
+            ths = []
+            for rec in scans:
+                ths.extend(rec.get("threat_list") or [])
+            out["threats"] = ths
+            # 只有"有日志"且"日志里威胁为 0"才能确定干净
+            total = sum((r.get("threats") or 0) for r in scans)
+            if total == 0:
+                out["clean_known"] = True
+                out["note"] = ("有扫描日志且威胁数为 0 —— 可判定为干净"
+                               "（证据充分）")
+            else:
+                out["note"] = ("有扫描日志，发现 %d 个威胁 —— 结果可读"
+                               "（含威胁名与引擎归属）" % total)
+            return out
+
+        # --- 通道 2：ScanCache（只证明执行，不证明结论）---
+        if since is not None:
+            try:
+                now = _snap()
+                for _k, (sz, mt) in now.items():
+                    if mt > since:
+                        out["cache_changed"] = True
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+
+        if out["cache_changed"]:
+            out["verdict_source"] = "cache_only"
+            out["note"] = ("ScanCache 有变化 —— 扫描确实执行了，"
+                           "但**没有日志**，因此**不能判定为干净**。"
+                           "需改用主 UI 扫描或其它手段获取判定。")
+        else:
+            out["note"] = "日志与 ScanCache 均无变化 —— 扫描未执行。"
+        return out
+
+    def scan_and_verdict(self, target: str, wait: int = 180,
+                         poll: int = 3) -> dict:
+        """触发扫描并返回双通道判定结果（一步到位）。
+
+        这是给自动化脚本用的高层接口：**它不会把"无日志"误报为"干净"**。
+        """
+        t0 = time.time()
+        r = self.trigger_scan(target, wait=wait, poll=poll)
+        v = self.scan_verdict(target=target, since=t0)
+        v["trigger"] = {
+            "triggered": r.get("triggered"),
+            "executed": r.get("executed"),
+            "elapsed": r.get("elapsed"),
+        }
+        return v
+
     # -------------------------------------------------- 触发 360 自己的扫描
 
     def trigger_scan(self, path: str, wait=180, poll=3) -> dict:
@@ -1363,6 +1473,15 @@ def main():
     shist.add_argument("--json", action="store_true")
     shist.add_argument("--limit", type=int, default=100,
                        help="最多读取的日志条数（按时间倒序）")
+    sverd = sub.add_parser(
+        "verdict",
+        help="★ 双通道判定：区分'扫描执行了'与'结果可读'（避免误报干净）")
+    sverd.add_argument("path", nargs="?", default=None,
+                       help="扫描目标（用于筛选日志）；省略则只看最近")
+    sverd.add_argument("--json", action="store_true")
+    sverd.add_argument("--trigger", action="store_true",
+                       help="先触发一次扫描再判定")
+    sverd.add_argument("--wait", type=int, default=180)
     sh = sub.add_parser("handle", help="处理最近一次扫描发现的威胁")
     sh.add_argument("--action", default="quarantine",
                     choices=["quarantine", "delete", "rename", "none"])
@@ -1466,6 +1585,38 @@ def main():
                 print("        md5=%s  命中=%d 次  首次=%s  末次=%s"
                       % (t.get("md5"), t.get("hits"),
                          t.get("first_seen"), t.get("last_seen")))
+
+    elif args.cmd == "verdict":
+        if args.trigger:
+            if not args.path:
+                print("--trigger 需要指定 path")
+                return
+            v = s.scan_and_verdict(args.path, wait=args.wait)
+        else:
+            v = s.scan_verdict(target=args.path)
+        if args.json:
+            print(json.dumps(v, ensure_ascii=False, indent=2))
+        else:
+            print("=" * 70)
+            print("★ 双通道判定（区分'扫描执行了'与'结果可读'）")
+            print("=" * 70)
+            print("判定来源: %s" % v["verdict_source"])
+            print("结果可读: %s" % v["log_available"])
+            print("可判定干净: %s" % v["clean_known"])
+            print("威胁数: %d" % len(v["threats"]))
+            print()
+            print("结论: %s" % v["note"])
+            if v.get("trigger"):
+                print()
+                print("触发信息: 已触发=%s 已执行=%s 耗时=%.1fs"
+                      % (v["trigger"]["triggered"], v["trigger"]["executed"],
+                         v["trigger"]["elapsed"] or 0))
+            if v["threats"]:
+                print()
+                print("--- 威胁明细 ---")
+                for t in v["threats"]:
+                    print("  [%s] %s" % (t.get("engine"), t.get("verdict")))
+                    print("        %s" % t.get("path"))
 
     elif args.cmd == "handle":
         r = s.handle_scan_log(action=args.action, quarantine_dir=args.dir,
