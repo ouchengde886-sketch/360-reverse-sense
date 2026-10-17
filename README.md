@@ -22,6 +22,8 @@
 | 查询拦截状态 | `AV360Sense.state()` | ✅ 实测可用 |
 | 实时统一监听 | `AV360Sense.watch()` | ✅ 实测可用 |
 | 读取官方扫描结果（含引擎归属）| `AV360Sense.scan_log_latest()` | ⚠️ 历史记录，**不参与判定** |
+| **聚合全部历史扫描日志的威胁** | `AV360Sense.scan_log_history()` / `scan_log_threats_all()` | ✅ **实测恢复 9 条威胁记录** |
+| **★ 双通道判定（防误报干净）** | `AV360Sense.scan_verdict()` / `scan_and_verdict()` | ✅ **三态判定实测通过** |
 | **触发 360 自己的扫描（右键菜单）** | `AV360Sense.trigger_scan(path)` | ✅ **实测触发成功** |
 | **触发 360 扫描（DSMain.exe）** | `AV360Sense.trigger_scan_dsmain()` | ✅ **实测触发成功** |
 | QVM AI 引擎 | `AV360Sense.qvm_state()` | ⚠️ 初始化通，扫描入口未接 |
@@ -35,6 +37,43 @@
 > 处理了该文件**（文件句柄有效、扫描流程完成），这是相比日志方案的关键
 > 进步。威胁判定的具体字段仍在定位中，因此该方法**不会把未确认的状态
 > 谎报成 `clean`**。
+
+### ★★★ 触发扫描后必须用 `scan_verdict()` 判定，不能看 `executed`
+
+**实测发现（2026-10-18）**：360 的右键扫描有**两条内部路径**：
+
+| 路径 | 表现 | 结果可读性 |
+|---|---|---|
+| A | 写完整格式 A 日志（扫描类型/引擎/文件数/威胁名） | ✅ **可读** |
+| B | 只更新 `ScanCache`（加密） | ❌ **不可读** |
+
+**走哪条由 360 内部决定，调用方无法控制。**
+
+**因此这条纪律是硬性的**：
+
+> **`trigger_scan()` 返回 `executed=True` 只证明"扫描执行了"，
+> 不证明"结果是干净的"。**
+
+**错误写法**（会误报干净）：
+```python
+r = s.trigger_scan(path)
+if r["executed"] and not new_threats:
+    print("干净")        # ← 错！可能只是日志没写出来
+```
+
+**正确写法**：
+```python
+v = s.scan_and_verdict(path)
+if v["clean_known"]:                 # 仅"有日志且威胁数为 0"时为 True
+    print("确定干净")
+elif v["verdict_source"] == "cache_only":
+    print("扫描跑了，但结果不可读 —— 不能声称干净")
+else:
+    print("扫描未执行")
+```
+
+**`clean_known` 字段在证据不足时强制为 `False`** —— 这是把
+"不要报告 processed 为 clean" 这条纪律固化成了代码约束。
 
 ---
 
