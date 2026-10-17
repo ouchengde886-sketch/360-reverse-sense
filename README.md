@@ -153,8 +153,45 @@ QEX 负责 `.ps1`/`.vbs`/`.js`/`.zip` 等 AVE 覆盖不到的文件。调用链�
 `susp.virus.generic.a` / `Virus.Generic.A` 等威胁名模板）尚未被触发，
 因此 `scan_qex` 目前返回 `verdict='processed'` 而非 `clean`——
 它表示「引擎确实读取并处理了该文件」，这是相对日志方案的真实进步，
-但还不是最终判定。QEX 的完整扫描入口（`qex1` 上下文 +
-`QexScanExportsInit` 函数表）仍在接入中。
+但还不是最终判定。
+
+### 2c. QEX 真实扫描 API（`qex1` 上下文 + selector 接口）
+
+后续逆向**打通了 QEX 的完整 API 层**，这是比 `slot[0x10]` 更底层的通道：
+
+- `QexScanExportsInit`（RVA `0xD48D0`）填入 **21 个函数指针**
+  （RVA `0xD1230`..`0xD20F0`），`QexResourceExportsInit` 另填 15 个
+- 表中 `+0x08`（RVA `0xD1330`）是**上下文创建函数**：
+  `int Create(void** out)`，成功返回 `0` 并写出上下文指针。
+  上下文首 DWORD 是魔数 **`0x31786571`**（ASCII `"qex1"`）
+- 创建过程内部按 GUID 对创建对象并存入 `ctx+4`，
+  实测 `ctx+4` 指向真实 QEX 内部对象（虚表 RVA `0x1C0C1C`）
+- 表中 `+0x14`（RVA `0xD1640`）是**查询入口**：
+  `int Query(void* ctx, int selector, int mode)`，`mode` 只接受 `0`/`1`，
+  内部 dispatch 到 `ctx+4` 对象的 `vtable[0x48]`（RVA `0xDF9D0`）
+- `vtable[0x48]` 是 **0x56 路跳转表**，`selector` 取值 `1..0x56`（1..86）
+
+**实测结果**（`test_qex_api.py`，13/13 通过）：
+
+| 验证项 | 结果 |
+|---|---|
+| `QexScanExportsInit` 返回 0 | ✅ |
+| 上下文创建返回 `rc=0` | ✅ |
+| 魔数 `0x31786571` 校验通过 | ✅ |
+| `ctx+4` 指向 QEX 内部对象 | ✅ |
+| 86 个 selector 全部可调用、无崩溃 | ✅ |
+| 有区分性响应（61 个 S_OK / 23 个 E_FAIL）| ✅ |
+| `obj+0x0C` 等于被扫描文件字节数 | ✅ |
+
+**仍未拿到最终判定**：86 个 selector 中没有任何一个通过**返回值**
+给出「是否恶意」。`sel=65`/`67` 返回 `1`，但对干净与恶意文件
+**结果完全相同**，确认是特性标志而非判定。
+判定结果通过 `vtable[0x48]` 的**输出结构**（`[ebp+0x0C]`）返回，
+该结构的字段布局尚未完全解出。
+
+**结论**：QEX 引擎的**调用通道已完整打通并验证**（上下文、魔数、
+selector 接口、真实文件读取全部有硬证据），
+但**判定值的输出结构**是当前已知的最后一层未解细节。
 
 详见 [查杀引擎调用现状.md](查杀引擎调用现状.md)。
 
