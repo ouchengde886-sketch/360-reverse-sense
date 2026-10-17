@@ -107,7 +107,7 @@ def main():
     check("空文件被拒绝", r_empty.get("status") == "4",
           "status=%s" % r_empty.get("status"))
     # 2d 破坏 MZ 头
-    bad = os.path.join(tmp, "badmz.exe")
+    bad = os.path.join(tmp, "badmz.com")
     b = bytearray(open(sec64(real), "rb").read())
     b[0] = 0x5A
     b[1] = 0x5A
@@ -120,7 +120,7 @@ def main():
     # ---------------------------------------------------------------- 3
     print("[3] 同一份字节、不同路径 —— 排除路径干扰")
     src = sec32(r"C:\Windows\System32\calc.exe")
-    copy = os.path.join(tmp, "calc_copy.exe")
+    copy = os.path.join(tmp, "calc_copy.com")
     shutil.copy2(sec64(src), copy)
     r_src = scan(src)
     r_cpy = scan(copy)

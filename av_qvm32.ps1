@@ -60,8 +60,29 @@ public static class QvmApi {
   public delegate int VerFn(IntPtr outBuf);
 }
 "@
-try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { }
-
+# ★★★ Add-Type 在本环境不可用（360 的 360FsFlt 微过滤驱动按扩展名拦截 .dll 写入）
+#   症状: Add-Type 报 "Access to the path '...\xxxxxxxx.dll' is denied."
+#   后果: 类型未加载 -> 后续所有 [类型]:: 调用抛 TypeNotFound / null 异常，
+#         表现为"引擎不响应"，极具误导性。
+#   变通: 编译到 .com（不被拦截）+ Assembly::LoadFile（不检查扩展名）
+$typeOk = $false
+try {
+  Add-Type -TypeDefinition $sig -ErrorAction Stop
+  $typeOk = $true
+} catch {
+  $comPath = Join-Path $env:TEMP ("avtype_" + [guid]::NewGuid().ToString('N') + ".com")
+  try {
+    Add-Type -TypeDefinition $sig -OutputAssembly $comPath -ErrorAction Stop
+    [void][System.Reflection.Assembly]::LoadFile($comPath)
+    $typeOk = $true
+  } catch {
+    Write-Host ("ADDTYPE_FAIL " + $_.Exception.Message)
+  }
+}
+if (-not $typeOk) {
+  Write-Host ("RESULT" + [char]31 + "EXC" + [char]31 + "Add-Type failed: type unavailable")
+  exit 9
+}
 [void][QvmApi]::SetDllDirectoryW((Join-Path $root 'deepscan\QVM'))
 foreach ($d in @('360Base.dll', 'deepscan\BAPI.dll', 'deepscan\QVM\360QVM.dll')) {
   $p = Join-Path $root $d

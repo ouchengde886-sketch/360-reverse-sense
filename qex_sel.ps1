@@ -46,8 +46,29 @@ public static class QSel {
   public delegate int F3(IntPtr a, IntPtr b, IntPtr c);
 }
 "@
-Add-Type -TypeDefinition $sig -ErrorAction Stop
-
+# ★★★ Add-Type 在本环境不可用（360 的 360FsFlt 微过滤驱动按扩展名拦截 .dll 写入）
+#   症状: Add-Type 报 "Access to the path '...\xxxxxxxx.dll' is denied."
+#   后果: 类型未加载 -> 后续所有 [类型]:: 调用抛 TypeNotFound / null 异常，
+#         表现为"引擎不响应"，极具误导性。
+#   变通: 编译到 .com（不被拦截）+ Assembly::LoadFile（不检查扩展名）
+$typeOk = $false
+try {
+  Add-Type -TypeDefinition $sig -ErrorAction Stop
+  $typeOk = $true
+} catch {
+  $comPath = Join-Path $env:TEMP ("avtype_" + [guid]::NewGuid().ToString('N') + ".com")
+  try {
+    Add-Type -TypeDefinition $sig -OutputAssembly $comPath -ErrorAction Stop
+    [void][System.Reflection.Assembly]::LoadFile($comPath)
+    $typeOk = $true
+  } catch {
+    Write-Host ("ADDTYPE_FAIL " + $_.Exception.Message)
+  }
+}
+if (-not $typeOk) {
+  Write-Host ("RESULT" + [char]31 + "EXC" + [char]31 + "Add-Type failed: type unavailable")
+  exit 9
+}
 [void][QSel]::SetDllDirectoryW((Join-Path $Root 'deepscan\qex'))
 foreach ($d in @('360Base.dll', 'deepscan\BAPI.dll', 'deepscan\qex\QEX.dll')) {
   $p = Join-Path $Root $d

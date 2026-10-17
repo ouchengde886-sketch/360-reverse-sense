@@ -129,33 +129,104 @@ public static class AveScan {
   public delegate int BapiInitFn(string root);
 }
 "@
-try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { }
+# ★★★ 关键：Add-Type 在本环境不可用
+#   360 的自我保护会拦截 .dll 后缀的文件写入（Add-Type 必须写临时 .dll），
+#   报错 "Access to the path '...\xxxxxxxx.dll' is denied."。
+#   原代码用 `catch { }` 静默吞掉，导致 [AveScan] 类型不存在，
+#   后续所有 [AveScan]:: 调用抛 "You cannot call a method on a null-valued
+#   expression."，最终每个文件都返回 EXC —— 看起来像"引擎没响应"，
+#   实际是类型没加载。
+#
+#   已验证的变通方案（见 docs/查杀引擎调用现状.md）：
+#     1) Add-Type -OutputAssembly xxx.com  —— 编译到 .com（.com 不被拦截）
+#     2) [Reflection.Assembly]::LoadFile(xxx.com) —— 不检查扩展名
+#   这样就能拿到可用的 [AveScan] 类型。
+$typeOk = $false
+try {
+  Add-Type -TypeDefinition $sig -ErrorAction Stop
+  $typeOk = $true
+} catch {
+  # 回退：编译到 .com 再 LoadFile
+  $comPath = Join-Path $env:TEMP ("avescan_" + [guid]::NewGuid().ToString('N') + ".com")
+  try {
+    Add-Type -TypeDefinition $sig -OutputAssembly $comPath -ErrorAction Stop
+    [void][System.Reflection.Assembly]::LoadFile($comPath)
+    $typeOk = $true
+  } catch {
+    # 最后手段：把异常写出来，不要静默吞掉
+    Write-Host ("ADDTYPE_FAIL " + $_.Exception.Message)
+  }
+}
+if (-not $typeOk) {
+  Write-Host ("RESULT" + [char]31 + $path + [char]31 + "EXC" + [char]31 +
+              "Add-Type failed: AveScan type unavailable")
+  exit 0
+}
 
 [void][AveScan]::SetDllDirectoryW((Join-Path $root 'deepscan\ave'))
+Write-Host ("ROOT=" + $root)
 foreach ($d in @('360Base.dll', 'deepscan\BAPI.dll', 'deepscan\ave\AVEngine.dll')) {
   $p = Join-Path $root $d
-  if (Test-Path $p) { [void][AveScan]::LoadLibraryW($p) }
+  if (Test-Path $p) {
+    $hm = [AveScan]::LoadLibraryW($p)
+    $le = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    # ★ 诊断输出：确认每个 DLL 是否真的加载成功
+    Write-Host ("LOAD " + $d + " -> 0x" + $hm.ToInt64().ToString("X") + " err=" + $le)
+  } else {
+    Write-Host ("LOAD " + $d + " -> MISSING (" + $p + ")")
+  }
 }
+$chk = [AveScan]::GetModuleHandleW('AVEngine.dll')
+Write-Host ("POSTLOAD GetModuleHandleW(AVEngine.dll) = 0x" + $chk.ToInt64().ToString("X"))
+$chk2 = [AveScan]::GetModuleHandleW('kernel32.dll')
+Write-Host ("POSTLOAD kernel32 = 0x" + $chk2.ToInt64().ToString("X"))
+$chk3 = [AveScan]::GetModuleHandleW('AVEngine.dll')
+Write-Host ("POSTLOAD again AVEngine = 0x" + $chk3.ToInt64().ToString("X"))
 
 # 0) AVEngine.dll!BAPIInitialize(LPCWSTR 产品根目录)
 #    AVEI!CreateScannerEx 内部会 GetProcAddress(AVEngine,"BAPIInitialize") 并调用，
 #    不先初始化会导致扫描器 +0x10 字段为空，进而 ScanW 返回 status=4。
 $bapiRc = "n/a"
+# ★ 关键：把 delegate 与函数指针保存在脚本作用域变量里，防止被 GC 回收。
+#   实测：如果只用局部变量持有 delegate，调用后 GetModuleHandleW 会返回 $null
+#   （表现为"同一次调用前面能拿到句柄、后面拿不到"）。
+$script:bapiDelegate = $null
+$script:bapiPtr = [IntPtr]::Zero
 $hEng0 = [AveScan]::GetModuleHandleW('360ave.dll')
 if ($hEng0 -eq [IntPtr]::Zero) { $hEng0 = [AveScan]::GetModuleHandleW('AVEngine.dll') }
 if ($hEng0 -ne [IntPtr]::Zero) {
   $pBapi = [AveScan]::GetProcAddress($hEng0, 'BAPIInitialize')
   if ($pBapi -ne [IntPtr]::Zero) {
-    $bapi = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($pBapi, [AveScan+BapiInitFn])
+    $script:bapiPtr = $pBapi
+    $script:bapiDelegate = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($pBapi, [AveScan+BapiInitFn])
     foreach ($bp in @($root, (Join-Path $root 'deepscan'), (Join-Path $root 'deepscan\ave'))) {
-      try { $bapiRc = $bapi.Invoke($bp); break } catch { $bapiRc = "EXC" }
+      try { $bapiRc = $script:bapiDelegate.Invoke($bp); break } catch { $bapiRc = "EXC" }
     }
   }
 }
 
 # 1) 获取引擎函数表（首 DWORD 必须预置 0x18）
-$hEng = [AveScan]::GetModuleHandleW('AVEngine.dll')
+# ★ 诊断：先单独取一次并打印，再赋给 $hEng。
+#   实测出现"同一次调用在 POSTLOAD 处返回 0x69BA0000、在这里却为 $null"，
+#   因此必须把两次调用分开观测，确认是哪一步丢失。
+$probe = [AveScan]::GetModuleHandleW('AVEngine.dll')
+Write-Host ("PROBE type=" + $probe.GetType().FullName + " val=0x" + $probe.ToInt64().ToString("X"))
+$hEng = $probe
 $initRc = "n/a"
+# ★ 诊断：显式打印返回值类型与数值。
+#   注意：不要用 `$hengDesc = ...` 这种"先赋值再打印"的写法，
+#   实测在 PowerShell 5.1 下若 $hEng 为 $null，`$hEng.GetType()` 会
+#   抛异常并被上层 catch 吞掉，导致打印出空字符串而误判为"句柄为空"。
+Write-Host ("HENG raw=[" + [string]$hEng + "]")
+if ($null -eq $hEng) {
+  Write-Host "HENG is null -> treating as IntPtr.Zero"
+  $hEng = [IntPtr]::Zero
+} elseif ($hEng -isnot [IntPtr]) {
+  $tmp = [IntPtr]::Zero
+  if ([IntPtr]::TryParse([string]$hEng, [ref]$tmp)) { $hEng = $tmp }
+  else { Write-Host ("HENG unparsable -> Zero, raw=" + [string]$hEng); $hEng = [IntPtr]::Zero }
+}
+Write-Host ("HENG final=0x" + $hEng.ToInt64().ToString("X"))
 if ($hEng -ne [IntPtr]::Zero) {
   $tbl = [System.Runtime.InteropServices.Marshal]::AllocHGlobal(0x40)
   for ($i = 0; $i -lt 0x40; $i++) { [System.Runtime.InteropServices.Marshal]::WriteByte($tbl, $i, 0) }
@@ -163,7 +234,13 @@ if ($hEng -ne [IntPtr]::Zero) {
   $pInit = [AveScan]::GetProcAddress($hEng, 'AveInitialize')
   if ($pInit -ne [IntPtr]::Zero) {
     $init = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($pInit, [AveScan+AveInitializeFn])
-    try { $initRc = $init.Invoke($tbl) } catch { $initRc = -1 }
+    try {
+      $initRc = $init.Invoke($tbl)
+    } catch {
+      # ★ 不要静默吞掉：把真实异常打出来，否则只能看到 init=-1 无从排查
+      $initRc = "EXC:" + $_.Exception.GetType().Name
+      Write-Host ("INIT_FAIL " + $_.Exception.Message)
+    }
   }
 }
 
