@@ -58,6 +58,9 @@ public static class QexScanLib {
   public delegate int CreateFn(IntPtr a, IntPtr b, IntPtr c);
   [UnmanagedFunctionPointer(CallingConvention.ThisCall)]
   public delegate int ScanFn(IntPtr self, IntPtr path, IntPtr access, IntPtr disposition);
+  // QexScanExportsInit / QexResourceExportsInit：填函数表（同 AveInitialize 模式）
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+  public delegate int InitFn(IntPtr buf);
 }
 "@
 Add-Type -TypeDefinition $sig -ErrorAction Stop
@@ -73,6 +76,23 @@ if ($h -eq [IntPtr]::Zero) {
 }
 $rd = [System.Runtime.InteropServices.Marshal]
 $base = $h.ToInt64()
+
+# ---- 初始化导出函数表（必须！否则引擎判定能力未启用）----
+# QexScanExportsInit(param): 首 DWORD 预置表大小 0x58 = 4 + 0x15*4
+$initParts = @()
+foreach ($nm in @('QexScanExportsInit', 'QexResourceExportsInit')) {
+  $pf = [QexScanLib]::GetProcAddress($h, $nm)
+  if ($pf -eq [IntPtr]::Zero) { $initParts += ($nm + "=NO"); continue }
+  $ib = $rd::AllocHGlobal(512)
+  for ($i = 0; $i -lt 512; $i++) { $rd::WriteByte($ib, $i, 0) }
+  $rd::WriteInt32($ib, 0, 0x58)
+  $fi = $rd::GetDelegateForFunctionPointer($pf, [QexScanLib+InitFn])
+  $r = "EXC"
+  try { $r = $fi.Invoke($ib) } catch { }
+  $initParts += ($nm + "=" + $r)
+  $rd::FreeHGlobal($ib)
+}
+$initStr = ($initParts -join ',')
 
 $out = $rd::AllocHGlobal(256)
 for ($i = 0; $i -lt 256; $i++) { $rd::WriteByte($out, $i, 0) }
@@ -133,14 +153,34 @@ try {
 $handleV = $rd::ReadInt32($obj, 8)
 $done = $rd::ReadInt32($obj, 0x18)
 
-# verdict: 目前只能确定"引擎已处理该文件"。
-# 威胁判定字段仍在定位中（obj+0x1C 指向结果对象，其 +0x38/+0x3C
-# 在恶意与干净样本间有差异，但尚未确认语义），因此不谎报 clean。
-$verdict = if ($opened -eq 1) { "processed" } else { "not_opened" }
+# 在对象及结果对象中搜索威胁名字符串（引擎判定为威胁时会写入）
+$hits = @()
+foreach ($ptr in @($obj, $rd::ReadIntPtr($obj, 0x1C))) {
+  if ($ptr -eq [IntPtr]::Zero) { continue }
+  try {
+    $buf = [byte[]]::new(0x400)
+    $rd::Copy($ptr, $buf, 0, 0x400)
+    $txt = [System.Text.Encoding]::ASCII.GetString($buf)
+    foreach ($kw in @('susp.virus', 'Virus.Generic', 'Trojan', 'Worm', 'Adware', 'Riskware', 'Backdoor')) {
+      if ($txt.Contains($kw) -and ($hits -notcontains $kw)) { $hits += $kw }
+    }
+  } catch { }
+}
+
+# verdict: 优先用威胁名作为判定依据；没有威胁名时如实标注为"已处理"，
+# 不谎报 clean。
+if ($hits.Count -gt 0) {
+  $verdict = "threat"
+} elseif ($opened -eq 1) {
+  $verdict = "processed"
+} else {
+  $verdict = "not_opened"
+}
 
 Write-Output ("QEX" + $sep + "ok=" + $opened + $sep + "verdict=" + $verdict + $sep +
               "slot10rc=" + $slotRc + $sep +
-              ("handle=0x{0:X8}" -f $handleV) + $sep + "done=" + $done)
+              ("handle=0x{0:X8}" -f $handleV) + $sep + "done=" + $done + $sep +
+              "init=[" + $initStr + "]" + $sep + "hits=[" + ($hits -join ',') + "]")
 
 $rd::FreeHGlobal($pathPtr)
 $rd::FreeHGlobal($out)

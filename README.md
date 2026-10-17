@@ -143,6 +143,18 @@ QEX 负责 `.ps1`/`.vbs`/`.js`/`.zip` 等 AVE 覆盖不到的文件。调用链�
   之前误传 `7`（当成 share mode）导致 `CreateFileW` 返回
   `INVALID_HANDLE_VALUE`，扫描被静默跳过 —— 这是长期卡住的根因
 - 成功标志：`obj+8` 是有效文件句柄，`obj+0x18 = 1` 表示流程完成
+- **必须先调用 `QexScanExportsInit` / `QexResourceExportsInit`**（同
+  `AveInitialize` 的函数表模式：首 DWORD 预置表大小 `0x58`），
+  它们分别填入 21 / 15 个函数指针。不调用则引擎的判定能力未启用
+
+**已知限制（如实标注，不谎报）**：`slot[0x10]` 经反汇编确认只做
+「打开文件 + 取大小」（内部调用 `CreateFileW` 与 `GetFileSizeEx`），
+**不做内容判定**。真正的检测函数 `FUN_10023b50`（内含
+`susp.virus.generic.a` / `Virus.Generic.A` 等威胁名模板）尚未被触发，
+因此 `scan_qex` 目前返回 `verdict='processed'` 而非 `clean`——
+它表示「引擎确实读取并处理了该文件」，这是相对日志方案的真实进步，
+但还不是最终判定。QEX 的完整扫描入口（`qex1` 上下文 +
+`QexScanExportsInit` 函数表）仍在接入中。
 
 详见 [查杀引擎调用现状.md](查杀引擎调用现状.md)。
 
