@@ -980,6 +980,167 @@ class AV360Sense:
         fs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         return fs
 
+    # -------------------------------------------------- 触发 360 自己的扫描
+
+    def trigger_scan(self, path: str, wait=180, poll=3) -> dict:
+        """触发 360 自己的查杀（右键菜单动词），并等待扫描真正执行。
+
+        这是**唯一能激活 360 完整引擎状态**的路径：外部 LoadLibrary 加载
+        360 的 DLL 时，引擎内部状态不完整（AVE 返回 status=4、ScChecker
+        是空壳、SendMainCommand 的全局对象为空），只有让 360 自己扫，
+        才会加载并配置全部引擎（含云端）。
+
+        判据不是"函数返回成功"，而是**扫描副作用**：360 会把扫描进度写入
+        `C:\\ProgramData\\360Safe\\ScanCache\\`，该目录文件的大小/时间戳
+        变化即为"扫描确实执行了"的硬证据。
+
+        ⚠️ 该动词走弹窗路径，**不写** `360safeScanLog.txt`，
+        结果落在加密的 ScanCache 里（格式未公开）。
+
+        返回 dict: ok / triggered / executed / elapsed / cache_delta
+        """
+        import glob as _glob
+        target = os.path.abspath(path)
+        out = {"path": target, "triggered": False, "executed": False,
+               "elapsed": None, "cache_delta": []}
+
+        cache_dir = r"C:\ProgramData\360Safe\ScanCache"
+
+        def _snap():
+            s = {}
+            try:
+                for f in _glob.glob(os.path.join(cache_dir, "*")):
+                    try:
+                        st = os.stat(f)
+                        s[os.path.basename(f)] = (st.st_size, st.st_mtime)
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            return s
+
+        before = _snap()
+        t0 = time.time()
+
+        # 通过 Shell.Application 调用右键菜单动词
+        ps = (
+            "$ErrorActionPreference='Stop';"
+            "$s=New-Object -ComObject Shell.Application;"
+            "$p=Split-Path -Path '{0}' -Parent;"
+            "$l=Split-Path -Path '{0}' -Leaf;"
+            "$f=$s.NameSpace($p);"
+            "if(-not $f){{Write-Output 'ERR:NameSpace';exit 2}};"
+            "$i=if($l){{$f.ParseName($l)}}else{{$f.Self}};"
+            "if(-not $i){{Write-Output 'ERR:ParseName';exit 3}};"
+            "$v=$i.Verbs()|Where-Object {{$_.Name -like '*木马*'}};"
+            "if(-not $v){{Write-Output 'ERR:NoVerb';exit 4}};"
+            "$v.DoIt();"
+            "Write-Output ('OK:'+$v.Name)"
+        ).format(target.replace("'", "''"))
+
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-Command", ps],
+                capture_output=True, text=True, timeout=60,
+                encoding="utf-8", errors="replace")
+            sout = (r.stdout or "").strip()
+            out["verb_result"] = sout[:200]
+            out["triggered"] = sout.startswith("OK")
+            if not out["triggered"]:
+                out["error"] = (sout or r.stderr or "").strip()[:300]
+        except Exception as e:  # noqa: BLE001
+            out["error"] = str(e)
+            return out
+
+        # 等待扫描副作用
+        deadline = t0 + wait
+        while time.time() < deadline:
+            time.sleep(poll)
+            now = _snap()
+            for k, v in now.items():
+                old = before.get(k)
+                if old is None:
+                    out["cache_delta"].append(
+                        {"file": k, "change": "new", "size": v[0]})
+                elif v[0] != old[0] or v[1] > old[1]:
+                    out["cache_delta"].append(
+                        {"file": k, "change": "grew",
+                         "from": old[0], "to": v[0]})
+            if out["cache_delta"]:
+                out["executed"] = True
+                out["elapsed"] = round(time.time() - t0, 1)
+                break
+
+        if not out["executed"]:
+            out["elapsed"] = round(time.time() - t0, 1)
+            out["note"] = ("未观察到 ScanCache 变化；扫描可能未执行或"
+                           "结果被缓存复用")
+        return out
+
+    def trigger_scan_dsmain(self, wait=90, poll=3) -> dict:
+        """用 `DSMain.exe /infofastscan` 触发 360 扫描。
+
+        ⚠️ 必须用 `cmd /c start` 启动：360 自我保护会拦截 .NET
+        `Start-Process` 的进程创建（报 `Access is denied.`），
+        而 `cmd` 的 `start` 可以绕过。
+
+        同样以 ScanCache 变化作为"扫描确实执行"的判据。
+        """
+        import glob as _glob
+        root = self.safe_root or find_engine_root()
+        exe = os.path.join(root, "deepscan", "DSMain.exe")
+        out = {"exe": exe, "triggered": False, "executed": False,
+               "elapsed": None, "cache_delta": []}
+        if not os.path.isfile(exe):
+            out["error"] = "DSMain.exe 不存在"
+            return out
+
+        cache_dir = r"C:\ProgramData\360Safe\ScanCache"
+
+        def _snap():
+            s = {}
+            for f in _glob.glob(os.path.join(cache_dir, "*")):
+                try:
+                    st = os.stat(f)
+                    s[os.path.basename(f)] = (st.st_size, st.st_mtime)
+                except OSError:
+                    pass
+            return s
+
+        before = _snap()
+        t0 = time.time()
+        try:
+            subprocess.run(
+                ["cmd", "/c", "start", "", exe, "/infofastscan"],
+                capture_output=True, text=True, timeout=30,
+                encoding="utf-8", errors="replace")
+            out["triggered"] = True
+        except Exception as e:  # noqa: BLE001
+            out["error"] = str(e)
+            return out
+
+        deadline = t0 + wait
+        while time.time() < deadline:
+            time.sleep(poll)
+            now = _snap()
+            for k, v in now.items():
+                old = before.get(k)
+                if old is None:
+                    out["cache_delta"].append(
+                        {"file": k, "change": "new", "size": v[0]})
+                elif v[0] != old[0] or v[1] > old[1]:
+                    out["cache_delta"].append(
+                        {"file": k, "change": "grew",
+                         "from": old[0], "to": v[0]})
+            if out["cache_delta"]:
+                out["executed"] = True
+                out["elapsed"] = round(time.time() - t0, 1)
+                break
+        if not out["executed"]:
+            out["elapsed"] = round(time.time() - t0, 1)
+        return out
+
     # -------------------------------------------------- 进程感知
 
     def poll_processes(self) -> list[Event]:
@@ -1067,6 +1228,12 @@ def main():
     sw.add_argument("--seconds", type=int, default=60)
     sw.add_argument("--interval", type=float, default=0.5)
     sw.add_argument("--json", action="store_true")
+    ts = sub.add_parser("trigger", help="触发 360 自己的扫描（右键菜单动词）")
+    ts.add_argument("path")
+    ts.add_argument("--wait", type=int, default=180)
+    td = sub.add_parser("trigger-dsmain",
+                        help="用 DSMain.exe /infofastscan 触发扫描")
+    td.add_argument("--wait", type=int, default=90)
 
     args = ap.parse_args()
     s = AV360Sense()
@@ -1176,6 +1343,54 @@ def main():
                 if ev.body:
                     print("   正文: %s" % ev.body.replace("\n", " | ")[:300])
         print("\n共捕获 %d 个事件。" % n)
+
+    elif args.cmd == "trigger":
+        print("=" * 70)
+        print("触发 360 自己的扫描（右键菜单动词）")
+        print("=" * 70)
+        r = s.trigger_scan(args.path, wait=args.wait)
+        print("  目标: %s" % r["path"])
+        print("  已触发: %s" % r["triggered"])
+        print("  已执行: %s" % r["executed"])
+        if r.get("elapsed") is not None:
+            print("  耗时: %ss" % r["elapsed"])
+        if r.get("cache_delta"):
+            print("  ★ 扫描副作用（ScanCache 变化，证明扫描确实执行）:")
+            for d in r["cache_delta"]:
+                if d["change"] == "new":
+                    print("      [新增] %s (%s 字节)" % (d["file"], d["size"]))
+                else:
+                    print("      [增长] %s %s -> %s 字节"
+                          % (d["file"], d["from"], d["to"]))
+        if r.get("note"):
+            print("  说明: %s" % r["note"])
+        if r.get("error"):
+            print("  错误: %s" % r["error"])
+        print("\n  注：该动词走弹窗路径，结果落在加密 ScanCache，"
+              "不写 360safeScanLog.txt。")
+
+    elif args.cmd == "trigger-dsmain":
+        print("=" * 70)
+        print("触发 360 扫描（DSMain.exe /infofastscan）")
+        print("=" * 70)
+        r = s.trigger_scan_dsmain(wait=args.wait)
+        print("  可执行文件: %s" % r["exe"])
+        print("  已触发: %s" % r["triggered"])
+        print("  已执行: %s" % r["executed"])
+        if r.get("elapsed") is not None:
+            print("  耗时: %ss" % r["elapsed"])
+        if r.get("cache_delta"):
+            print("  ★ 扫描副作用（ScanCache 变化，证明扫描确实执行）:")
+            for d in r["cache_delta"]:
+                if d["change"] == "new":
+                    print("      [新增] %s (%s 字节)" % (d["file"], d["size"]))
+                else:
+                    print("      [增长] %s %s -> %s 字节"
+                          % (d["file"], d["from"], d["to"]))
+        if r.get("error"):
+            print("  错误: %s" % r["error"])
+        print("\n  注：用 cmd /c start 启动（绕过 360 自我保护对 "
+              "Start-Process 的拦截）。")
 
 
 if __name__ == "__main__":

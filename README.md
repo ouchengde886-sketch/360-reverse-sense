@@ -22,6 +22,8 @@
 | 查询拦截状态 | `AV360Sense.state()` | ✅ 实测可用 |
 | 实时统一监听 | `AV360Sense.watch()` | ✅ 实测可用 |
 | 读取官方扫描结果（含引擎归属）| `AV360Sense.scan_log_latest()` | ⚠️ 历史记录，**不参与判定** |
+| **触发 360 自己的扫描（右键菜单）** | `AV360Sense.trigger_scan(path)` | ✅ **实测触发成功** |
+| **触发 360 扫描（DSMain.exe）** | `AV360Sense.trigger_scan_dsmain()` | ✅ **实测触发成功** |
 | QVM AI 引擎 | `AV360Sense.qvm_state()` | ⚠️ 初始化通，扫描入口未接 |
 | QEX 引擎实例 | `AV360Sense.qex_create_instance()` | ✅ 实例创建通 |
 
