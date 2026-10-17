@@ -18,6 +18,9 @@ static_out/
 # 逆向工具链（Ghidra + JDK，体积大且可重新下载）
 tools/
 
+# 归档：探索期的临时脚本与数据，保留在本地但不入库
+archive/
+
 # 编辑器
 .vscode/
 .idea/
@@ -26,8 +29,3 @@ tools/
 # 系统
 Thumbs.db
 desktop.ini
-
-# 大体积中间文件（可按需保留）
-# all_binaries.txt
-# pe_report.json
-# static_report.txt
