@@ -86,6 +86,60 @@ HIPS_POPUP_CLASS = "Q360HIPSClass"      # 主动防御拦截弹窗
 MAIN_WINDOW_CLASS = "Q360SafeMonClass"  # 360 主窗口
 NETMON_WINDOW_CLASS = "Q360NetmonMainWndClass"
 
+# ★ 实测枚举到的全部 360 弹窗/通知窗口类（2026-10-18 本机 EnumWindows 快照）
+# 主动防御与实时防护的提示窗口不止 Q360HIPSClass 一个 —— 只盯一个类会漏报。
+POPUP_CLASSES = {
+    "Q360HIPSClass",              # 主动防御拦截弹窗
+    "Q360SafeMainClass",          # 360 主界面（扫描结果在此显示）
+    "Q360SafeMonClass",           # 实时防护监控窗口
+    "Qh360ExpClient",             # 体验/通知客户端（Qh360ExpClient_safe）
+    "Qh360UCenterWnd",            # 用户中心通知
+    "Qh360TraySafeId",            # 托盘身份提示
+    "Q360NetmonMainWndClass",     # 网络监控
+    "Q360NetmonClass",            # 网络监控（托盘）
+    "360NetmonWindowClass{364B9", # 网络监控（截断类名，前缀匹配）
+    "Q360AdPopBlocker",           # 广告弹窗拦截器
+    "AdvToolUpdateTip",           # 工具更新提示
+    "CAdvToolExecutorAdaptWnd",   # 工具执行器（360AdvTool）
+    "SitesUI",                    # 网站提示
+    "360LeakFixer",               # 漏洞修复
+    "LiveUpd360C",                # 升级提示
+    "SoftMgrSingleUpgradeMain",   # 软件管家升级
+    "SMLSingleUpgrade_HelpWndCl", # 软件管家升级帮助
+    "WebSoket_MiniAppHelperClas", # 小程序助手
+    "ADShutdownListenerHiddenWi", # 关机监听
+    "360InstallMain",             # 360 安装/组件安装窗口
+    "#360IDSMultiUserWnd",        # 入侵检测
+    "#360NetDefenderMultiUserWn", # 网络防御
+    "#32770",                     # 标准 Win32 对话框（360 也会用）
+}
+
+# 标题里出现这些词 → 判定为"需要用户注意的提示"
+POPUP_TITLE_HINTS = (
+    "木马", "病毒", "拦截", "阻止", "发现", "处理", "威胁",
+    "提醒", "警告", "风险", "安全", "防护", "隔离", "清除",
+)
+
+
+def is_popup_class(cls: str) -> bool:
+    """判断窗口类名是否属于 360 的弹窗/通知窗口（含前缀匹配）。"""
+    if not cls:
+        return False
+    if cls in POPUP_CLASSES:
+        return True
+    # 类名可能被 EnumWindows 截断，做前缀匹配
+    for c in POPUP_CLASSES:
+        if len(c) >= 12 and cls.startswith(c[:12]):
+            return True
+    return False
+
+
+def is_popup_title(title: str) -> bool:
+    """判断窗口标题是否像"拦截/查杀提示"。"""
+    if not title:
+        return False
+    return any(h in title for h in POPUP_TITLE_HINTS)
+
 SAFEMON_KEY = r"SOFTWARE\WOW6432Node\360Safe\safemon"
 
 # 拦截开关 -> 中文含义
@@ -764,19 +818,29 @@ class AV360Sense:
         user32.EnumChildWindows(hwnd, cb, 0)
         return "\n".join(texts)
 
-    def poll_popups(self) -> list[Event]:
-        """扫描当前存在的 HIPS 弹窗，返回新出现的弹窗事件。
+    def poll_popups(self, include_all_360: bool = False) -> list[Event]:
+        """扫描当前存在的 360 弹窗，返回新出现的弹窗事件。
 
         弹窗的正文往往在窗口出现后若干毫秒才由 360 填入子控件，
         因此这里对"已见但正文为空"的窗口做一次补读（enrich），
         补读成功时产出补充事件，避免漏掉正文/路径/动作信息。
+
+        ★ 2026-10-18 扩展：不再只匹配 Q360HIPSClass。
+        实测枚举到 360 有 20+ 个弹窗/通知窗口类（见 POPUP_CLASSES），
+        只盯一个类会漏报实时防护与主界面提示。
+        判定规则：类名在 POPUP_CLASSES 中（含前缀匹配），
+        或标题命中 POPUP_TITLE_HINTS（木马/病毒/拦截/...）。
+        include_all_360=True 时，额外把标题含 "360" 的窗口也纳入。
 
         首次调用只建立基线，不产出事件。
         """
         events = []
         alive = set()
         for hwnd, cls, title in self._enum_windows():
-            if cls != HIPS_POPUP_CLASS:
+            hit = is_popup_class(cls) or is_popup_title(title)
+            if not hit and include_all_360 and "360" in (title or ""):
+                hit = True
+            if not hit:
                 continue
             alive.add(hwnd)
 
