@@ -12,17 +12,36 @@
 
 | 能力 | 接口 | 状态 |
 |---|---|---|
-| 主动查杀（AVE 特征引擎，任意 PE）| `AV360Sense.scan_ave(path)` | ✅ 实测可用 |
-| 多引擎联合查杀 | `AV360Sense.scan_all_engines(path)` | ✅ 5/5 检出 |
-| 读取官方扫描结果（含引擎归属）| `AV360Sense.scan_log_latest()` | ✅ 实测可用 |
+| 主动查杀（AVE 特征引擎，任意 PE）| `AV360Sense.scan_ave(path)` | ✅ 12/12 验证通过 |
+| 多引擎联合查杀（仅即时引擎参与判定）| `AV360Sense.scan_all_engines(path)` | ✅ 8/8 验证通过 |
 | 处理威胁（隔离/删除/改名）| `AV360Sense.handle_threat()` / `handle_scan_log()` | ✅ 实测可用 |
 | 感知主动防御弹窗 | `AV360Sense.poll_popups()` | ✅ 实测可用 |
 | 感知杀毒通知 | `AV360Sense.poll_scan_log()` | ✅ 实测可用 |
 | 感知防护进程启停 | `AV360Sense.poll_processes()` | ✅ 实测可用 |
 | 查询拦截状态 | `AV360Sense.state()` | ✅ 实测可用 |
 | 实时统一监听 | `AV360Sense.watch()` | ✅ 实测可用 |
+| 读取官方扫描结果（含引擎归属）| `AV360Sense.scan_log_latest()` | ⚠️ 历史记录，**不参与判定** |
 | QVM AI 引擎 | `AV360Sense.qvm_state()` | ⚠️ 初始化通，扫描入口未接 |
 | QEX 脚本引擎实例 | `AV360Sense.qex_create_instance()` | ⚠️ 实例创建通，判定方法未定 |
+
+> **重要：判定结论只来自即时引擎调用。** 360 官方扫描日志是历史记录，
+> 对新文件会给出误导性的 clean，因此它被隔离在 `reference` 字段中，
+> **绝不参与 `verdict` 计算**。详见「关于扫描日志」一节。
+
+---
+
+## 验证
+
+三条独立测试，全部可复现：
+
+```bash
+python test_ave_engine.py            # AVE 引擎真实调用验证（12 项）
+python test_no_log_hallucination.py  # 证明判定不来自日志（8 项）
+python test_av360_sense.py           # 感知层回归（弹窗/查杀通知）
+```
+
+`test_ave_engine.py` 用「同一份字节、不同路径」和「存在/不存在」构造对照，
+证明引擎确实在判定文件内容，而不是恒返回某个值。
 
 ---
 
@@ -84,16 +103,38 @@ for ev in s.watch(seconds=30):         # 实时感知
 | 未知样本 | 启发式 / QVM |
 
 **AVE 引擎只处理 PE**，对脚本/压缩包一律返回 `status=4`。
-判定脚本类样本必须用 `scan_all_engines()`。
 
 ### 2. 引擎调用链的关键细节
 
 - `AveInitialize` 是**取函数表**而非初始化，首 DWORD 必须预置 `0x18`
 - `ScanW` 是 `__stdcall` 5 参数（机器码 `ret 0x14` 证实）
 - `SetScannerConfig` 是 `__stdcall` 而非 `__thiscall` —— 用错会**静默失败**，特征库不加载
+- **`AVEngine.dll!BAPIInitialize(LPCWSTR 产品根目录)` 必须先调用** ——
+  `AVEI!CreateScannerEx` 内部会 `GetProcAddress` 并调用它；
+  不调用则扫描器上下文为空，`ScanW` 返回 `status=4`
+- 结果结构：`+0x000` 状态码（0=干净 1=威胁 4=非PE 251=文件不可见）、
+  `+0x004` 文件大小、`+0x008` 威胁名、`+0x108` 子状态
 - 目标引擎是 **x86**，必须用 `C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`
+- **WOW64 重定向**：32 位宿主访问 `C:\Windows\System32` 会被重定向到
+  `SysWOW64`，文件"消失"导致 `status=251`。SDK 会自动改写为 `Sysnative`
 
 详见 [查杀引擎调用现状.md](查杀引擎调用现状.md)。
+
+### 3. 关于扫描日志（为什么它不参与判定）
+
+`%APPDATA%\360Safe\360ScanLog\360safeScanLog.txt` 是 **360 GUI 扫描的历史记录**，
+不是查询接口。它的致命问题是：**对新文件会返回误导性的结论**。
+
+实测证据：造一个 360 从未扫描过的 `brand_new.ps1`，日志通道报 `clean`
+—— 它根本没看过这个文件，只是"不在上次的威胁列表里"。
+
+因此本 SDK 的规则是：
+
+- `verdict` **只由即时引擎调用决定**（`scan_ave` / `scan` / `qex`）
+- 日志内容放在 `reference` 字段，标注"历史记录，不参与判定"
+- 需要日志请显式调用 `scan_log_latest()`
+
+`test_no_log_hallucination.py` 专门验证这条规则不被破坏。
 
 ### 3. 感知通道
 

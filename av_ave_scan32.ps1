@@ -124,14 +124,33 @@ public static class AveScan {
   public delegate int SetScannerConfigFn(IntPtr scanner, IntPtr guid, IntPtr cfg);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)]
   public delegate int CloseScannerFn(IntPtr scanner);
+  // BAPIInitialize(LPCWSTR 产品根目录) —— AVEngine.dll 导出
+  [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet=CharSet.Unicode)]
+  public delegate int BapiInitFn(string root);
 }
 "@
 try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { }
 
 [void][AveScan]::SetDllDirectoryW((Join-Path $root 'deepscan\ave'))
-foreach ($d in @('360Base.dll', 'deepscan\ave\AVEngine.dll')) {
+foreach ($d in @('360Base.dll', 'deepscan\BAPI.dll', 'deepscan\ave\AVEngine.dll')) {
   $p = Join-Path $root $d
   if (Test-Path $p) { [void][AveScan]::LoadLibraryW($p) }
+}
+
+# 0) AVEngine.dll!BAPIInitialize(LPCWSTR 产品根目录)
+#    AVEI!CreateScannerEx 内部会 GetProcAddress(AVEngine,"BAPIInitialize") 并调用，
+#    不先初始化会导致扫描器 +0x10 字段为空，进而 ScanW 返回 status=4。
+$bapiRc = "n/a"
+$hEng0 = [AveScan]::GetModuleHandleW('360ave.dll')
+if ($hEng0 -eq [IntPtr]::Zero) { $hEng0 = [AveScan]::GetModuleHandleW('AVEngine.dll') }
+if ($hEng0 -ne [IntPtr]::Zero) {
+  $pBapi = [AveScan]::GetProcAddress($hEng0, 'BAPIInitialize')
+  if ($pBapi -ne [IntPtr]::Zero) {
+    $bapi = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($pBapi, [AveScan+BapiInitFn])
+    foreach ($bp in @($root, (Join-Path $root 'deepscan'), (Join-Path $root 'deepscan\ave'))) {
+      try { $bapiRc = $bapi.Invoke($bp); break } catch { $bapiRc = "EXC" }
+    }
+  }
 }
 
 # 1) 获取引擎函数表（首 DWORD 必须预置 0x18）
@@ -222,7 +241,7 @@ try {
   $status = $resBuf[0]
   $sub    = $resBuf[0x108]
   $fsize  = [BitConverter]::ToUInt32($resBuf, 4)
-  $name   = [System.Text.Encoding]::Default.GetString($resBuf, 7, 0x100)
+  $name   = [System.Text.Encoding]::Default.GetString($resBuf, 8, 0xFF)
   $z = $name.IndexOf([char]0)
   if ($z -ge 0) { $name = $name.Substring(0, $z) }
   $name = $name.Trim()
@@ -237,7 +256,7 @@ try {
   }
 
   Write-Output ("RESULT" + $US + $Target + $US + $verdict + $US +
-                ("status={0} sub={1} size={2} name={3} init={4} cfg={5} rc={6}" -f $status, $sub, $fsize, $name, $initRc, $cfgRc, $rc))
+                ("status={0} sub={1} size={2} name={3} init={4} cfg={5} rc={6} bapi={7}" -f $status, $sub, $fsize, $name, $initRc, $cfgRc, $rc, $bapiRc))
 } catch {
   Write-Output ("RESULT" + $US + $Target + $US + "EXC" + $US + $_.Exception.Message)
 } finally {

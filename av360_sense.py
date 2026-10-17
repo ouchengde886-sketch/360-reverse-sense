@@ -129,6 +129,26 @@ QEX_PROBE = os.path.join(HERE, "av_qex32.ps1")
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
+
+def _to_sysnative(path: str) -> str:
+    """32 位进程访问 C:\\Windows\\System32 会被 WOW64 重定向到 SysWOW64。
+
+    引擎返回 status=251（文件不可见）多半就是这个原因。
+    用 Sysnative 别名可以穿透重定向拿到真实的 64 位 System32。
+    """
+    low = path.lower()
+    if low.startswith("c:\\windows\\system32\\"):
+        return "C:\\Windows\\Sysnative\\" + path[len("C:\\Windows\\System32\\"):]
+    return path
+
+
+def _from_sysnative(path: str) -> str:
+    """Sysnative 是 32 位进程专用别名，64 位 Python 读不到，需还原。"""
+    low = path.lower()
+    if low.startswith("c:\\windows\\sysnative\\"):
+        return "C:\\Windows\\System32\\" + path[len("C:\\Windows\\Sysnative\\"):]
+    return path
+
 k32.CreateFileW.restype = wt.HANDLE
 k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, ctypes.c_void_p,
                             wt.DWORD, wt.DWORD, wt.HANDLE]
@@ -316,24 +336,34 @@ class AV360Sense:
         引擎限制（逆向得出，已在 av_ave_scan32.ps1 中处理）：
           - 引擎是 x86，必须用 32 位 PowerShell 宿主
           - 必须先 AveInitialize 取函数表，再加载 AVEI.dll
+          - 必须 BAPIInitialize 初始化（否则扫描器上下文为空）
           - 必须 SetScannerConfig 加载特征库，否则扫描被静默跳过
           - 只接受合法 PE 文件；非 PE 返回 status=4
+
+        WOW64 注意：32 位宿主访问 C:\\Windows\\System32 会被重定向到
+        SysWOW64，导致文件"不存在"（引擎返回 status=251）。
+        本方法自动把 System32 路径改写为 Sysnative。
 
         返回 dict:
           ok       bool
           verdict  'clean' | 'threat' | 'engine_error' | 'error' | 'invalid_args'
-          status   引擎原始状态码（0=干净 1=威胁 4=非PE）
+          status   引擎原始状态码（0=干净 1=威胁 4=非PE 251=文件不可见）
           name     威胁名称（threat 时有值）
           detail   原始明细
         """
         path = path.lstrip("\ufeff").strip().strip('"')
-        path = os.path.abspath(path)
-        if not os.path.exists(path):
-            return {"path": path, "ok": False, "error": "file not found"}
+        # 调用方可能直接给了 Sysnative 路径（32 位视角），
+        # 64 位 Python 看不到该别名，先还原再检查存在性。
+        real_path = _from_sysnative(path)
+        real_path = os.path.abspath(real_path)
+        if not os.path.exists(real_path):
+            return {"path": real_path, "ok": False, "error": "file not found"}
         if not os.path.exists(AVE_SCAN):
-            return {"path": path, "ok": False, "error": "missing %s" % AVE_SCAN}
+            return {"path": real_path, "ok": False, "error": "missing %s" % AVE_SCAN}
 
-        out = _run_ps32(AVE_SCAN, path, self.safe_root, timeout=timeout)
+        # 32 位宿主看不到 System32（WOW64 重定向），改写为 Sysnative
+        scan_path = _to_sysnative(real_path)
+        out = _run_ps32(AVE_SCAN, scan_path, self.safe_root, timeout=timeout)
         sep = "\x1f"
         for line in out.splitlines():
             if line.startswith("RESULT" + sep):
@@ -454,24 +484,23 @@ class AV360Sense:
         return {"ok": False, "error": "no result", "raw": out[:400]}
 
     def scan_all_engines(self, path: str, timeout=180) -> dict:
-        """多引擎联合查杀。
+        """多引擎联合查杀 —— 全部为即时引擎调用。
 
         覆盖的引擎通道：
           ave       —— AVE 特征引擎（本地木马库），直接调用 DLL，支持任意 PE
           cloud     —— 云端信誉（GetFileTrustState 签名/信誉查询）
-          official  —— 360 官方扫描日志（含 QEX 脚本引擎 / 云安全引擎 /
-                       启发式引擎的判定与引擎归属）
+          qex       —— QEX 脚本引擎实例状态（脚本类文件）
 
-        official 通道说明：360 的多引擎编排由 deepscan.dll/DSFScan.dll 完成，
-        各引擎为独立 COM 组件，逐个手工初始化成本高且易错。
-        官方扫描日志是**权威且完整**的多引擎结果来源：它明确记录
-        "扫描引擎: 360云查杀引擎 360启发式引擎 QEX脚本查杀引擎"
-        以及每条威胁由哪个引擎判定。因此本方法将日志作为 official 通道，
-        用于覆盖 AVE 不处理的非 PE 文件（脚本、压缩包等）。
+        **判定结论只来自上述即时调用。** 360 官方扫描日志单独放在
+        `reference` 字段，仅供对照，绝不参与 verdict 计算 ——
+        因为日志是历史记录，对新文件会给出误导性的 clean。
+        需要日志内容请显式调用 scan_log_latest()。
 
-        注意：official 通道读的是**最近一次**官方扫描的结果，
-        不是即时查询 —— 新文件需先触发一次 360 扫描才会出现在日志里。
-        即时能力目前只有 ave 通道（仅 PE）。脚本文件的即时查杀见 scan_qex()。
+        返回 dict:
+          path       目标文件
+          verdict    'threat' | 'clean' | 'unknown'（仅由即时引擎决定）
+          engines    各引擎的原始返回
+          reference  360 官方扫描日志中的相关记录（不参与判定）
         """
         out = {"path": os.path.abspath(path), "engines": {}}
         try:
@@ -482,28 +511,6 @@ class AV360Sense:
             out["engines"]["cloud"] = self.scan(path, timeout=timeout)
         except Exception as e:  # noqa: BLE001
             out["engines"]["cloud"] = {"ok": False, "error": str(e)}
-
-        # official 通道：从最近一次 360 官方扫描结果中查该文件
-        try:
-            ap = os.path.abspath(path).lower()
-            hits = [t for t in self.scan_log_threats()
-                    if t["path"].lower() == ap]
-            if hits:
-                h = hits[0]
-                out["engines"]["official"] = {
-                    "ok": True, "verdict": "threat",
-                    "engine": h["engine"], "name": h["verdict"],
-                    "action": h["action"], "handled": h["handled"],
-                }
-            elif self.scan_log_summary():
-                out["engines"]["official"] = {
-                    "ok": True, "verdict": "clean",
-                    "note": "不在最近一次官方扫描的威胁列表中",
-                }
-        except Exception as e:  # noqa: BLE001
-            out["engines"]["official"] = {"ok": False, "error": str(e)}
-
-        # qex 通道：脚本查杀引擎实例（能创建实例，判定方法见 scan_qex 说明）
         try:
             q = self.qex_create_instance()
             out["engines"]["qex"] = {
@@ -515,16 +522,37 @@ class AV360Sense:
         except Exception as e:  # noqa: BLE001
             out["engines"]["qex"] = {"ok": False, "error": str(e)}
 
-        verdicts = [v.get("verdict") for v in out["engines"].values() if v.get("verdict")]
+        # 判定：只看即时引擎，且必须 ok 才算数
+        verdicts = [v.get("verdict") for v in out["engines"].values()
+                    if v.get("verdict") and v.get("ok")]
         if "threat" in verdicts:
             out["verdict"] = "threat"
         elif "clean" in verdicts:
             out["verdict"] = "clean"
-        elif verdicts:
-            out["verdict"] = verdicts[0]
         else:
             out["verdict"] = "unknown"
         out["ok"] = any(v.get("ok") for v in out["engines"].values())
+
+        # 参考信息：官方扫描日志（明确标注不参与判定）
+        try:
+            ap = os.path.abspath(path).lower()
+            hits = [t for t in self.scan_log_threats() if t["path"].lower() == ap]
+            if hits:
+                h = hits[0]
+                out["reference"] = {
+                    "source": "360 官方扫描日志（历史记录，不参与判定）",
+                    "found": True,
+                    "engine": h["engine"], "name": h["verdict"],
+                    "action": h["action"], "handled": h["handled"],
+                }
+            else:
+                out["reference"] = {
+                    "source": "360 官方扫描日志（历史记录，不参与判定）",
+                    "found": False,
+                    "note": "不在最近一次官方扫描的威胁列表中",
+                }
+        except Exception as e:  # noqa: BLE001
+            out["reference"] = {"source": "360 官方扫描日志", "error": str(e)}
         return out
 
     # -------------------------------------------------- 处理威胁
