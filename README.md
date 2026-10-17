@@ -96,6 +96,57 @@ python test_av360_sense.py           # 感知层回归（弹窗/查杀通知）
 
 ---
 
+## 360 自我保护的可利用面（实测结论）
+
+> 完整记录见 `docs/查杀引擎调用现状.md`「漏洞排查」各轮。
+> **以下每条均有可复现的验证脚本。**
+
+### 可利用的漏洞（9 项）
+
+| # | 漏洞 | 实测证据 |
+|---|---|---|
+| 1 | **`.com`/`.bin`/`.dat`/`.tmp` 可写可执行真实 PE** | 344064 字节 PE 换后缀后写入+执行成功 |
+| 2 | **完整注入链条无拦截** | `CreateRemoteThread` 退出码 `0x1337` 精确匹配 |
+| 3 | **网络层完全无拦截** | DNS/外网TCP/HTTP/入站监听 15 项全部成功 |
+| 4 | **句柄封锁可被 5 条旁路绕过** | WMI/`NtQuerySystemInformation`/性能计数器/服务/注册表 |
+| 5 | **`.com`+`LoadFile` 恢复 PowerShell P/Invoke** | `GetWidth()=1920` |
+| 6 | **Python `ctypes` 完全不受拦截** | 窗口枚举 + 弹窗截图成功 |
+| 7 | **`HKCU` 持久化完全可写** | `Run`/`RunOnce`/`Environment`/`Classes` |
+| 8 | **拦截不看内容** | 同一份 PE，`.exe` 失败、`.com` 成功 |
+| 9 | **拦截无弹窗（静默）** | 0.5s/3s 均无新窗口，只能靠 `UnauthorizedAccessException` 感知 |
+
+### 真实的保护边界（**只有 2 项**）
+
+1. **`ZhuDongFangYu` 的进程句柄创建** —— `OpenProcess` 全权限 DENIED（含 mask 0），
+   `NtOpenProcess` 同样 `0xC0000022`
+2. **可执行后缀的文件写入** —— `{exe, dll, sys, ocx, vbs, scr, cpl}`，
+   大小写不敏感，4 种改名 API 均无法绕过
+
+### 免杀策略结论
+
+> **360 的主动防御是"文件落地导向"的，对内存注入与网络通信几乎不设防。**
+> **把 payload 放进内存执行（注入/反射加载），比让它落地成文件安全得多。**
+> **若必须落地，避开 `{exe, dll, sys, ocx, vbs, scr, cpl}` 后缀。**
+
+### 已更正的误判（7 项）
+
+以下曾被误认为"360 保护"，实为 Windows 标准行为或工具误用：
+
+| 原结论 | 真实原因 |
+|---|---|
+| `ZhuDongFangYu.exe` 文件系统不可读 | 路径写错，实际可读 |
+| `Start-Process` 被自我保护拦截 | 未被拦，9 种场景全部成功 |
+| 360 目录不可写是 360 保护 | Windows 标准 ACL + 未提权 |
+| `HKLM` 只读是 360 保护 | Windows 标准 ACL + 未提权 |
+| 注入原语返回 `False`（疑似被拦）| ctypes 未设 `argtypes`，指针被截断 |
+| `VirtualAllocEx` 被选择性拦截 | `STATUS_PROCESS_IS_TERMINATING`（进程正在退出）|
+| 右键扫描只写 ScanCache 不写日志 | 落点由 360 内部路径决定，非调用方式决定 |
+
+> **方法论教训**：**"API 返回失败"不等于"被安全软件拦截"** ——
+> 必须检查真实错误码（用 `ntdll` 原生调用取 `NTSTATUS`，而非 `GetLastError()`）。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -241,7 +292,7 @@ selector 接口、真实文件读取全部有硬证据），
 `%APPDATA%\360Safe\360ScanLog\360safeScanLog.txt` 是 **360 GUI 扫描的历史记录**，
 不是查询接口。它的致命问题是：**对新文件会返回误导性的结论**。
 
-实测证据：造一个 360 从未扫描过的 `brand_new.ps1`，日志通道报 `clean`
+实测证据：造一个 360 从未扫描过的 `brand_new_never_scanned.ps1`（测试临时生成），日志通道报 `clean`
 —— 它根本没看过这个文件，只是"不在上次的威胁列表里"。
 
 因此本 SDK 的规则是：
@@ -264,49 +315,50 @@ selector 接口、真实文件读取全部有硬证据），
 
 ## 文件说明
 
+> **目录结构（2026-10-18 整理）**：根目录只保留可交付物。
+> 探索期的 300+ 临时脚本已归档到 `archive/`（本地保留，不入库）。
+
 ### 核心交付
 
 | 文件 | 说明 |
 |---|---|
-| `av360_sense.py` | 感知层 SDK（查杀/处理/感知/状态）|
+| `av360_sense.py` | 感知层 SDK（查杀/处理/感知/状态/双通道判定）|
+| `parse_cache.py` | ScanCache 格式解析器（独立可运行）|
 | `av_ave_scan32.ps1` | AVE 特征引擎调用器（32 位宿主）|
 | `av_qvm32.ps1` | QVM AI 引擎初始化 |
 | `av_qex32.ps1` | QEX 脚本引擎实例创建（GUID 工厂）|
 | `av_trust_one32.ps1` | 云端信誉查询 |
-| `引擎全景.ps1` | 20 个引擎组件清单与状态 |
+| `qex_ctx.ps1` / `qex_sel.ps1` / `qex_dump_check.ps1` | QEX 上下文与 selector 探测 |
 
-### 逆向辅助工具
-
-| 文件 | 说明 |
-|---|---|
-| `exports.py` | PE 导出表解析（含 forwarder 识别）|
-| `imports.py` | PE 导入表解析 |
-| `guidtable.py` | 从 PE 指定 RVA 读取 GUID 表 |
-| `strings.py` | UTF-16 / ASCII 字符串提取 |
-
-### 文档
+### 文档（`docs/`）
 
 | 文件 | 说明 |
 |---|---|
-| `查杀引擎调用现状.md` | 引擎接入现状、调用序列、逆向细节、踩坑记录 |
-| `感知层集成指南.md` | SDK 集成指南 |
-| `360逆向分析报告.md` | 整体逆向报告 |
-| `FINDINGS.md` | 逆向发现汇总 |
-| `troyr2扫描报告.md` | 实测扫描报告 |
+| `docs/查杀引擎调用现状.md` | 引擎接入现状、调用序列、逆向细节、漏洞排查全记录 |
+| `docs/感知层集成指南.md` | SDK 集成指南 |
+| `docs/360逆向分析报告.md` | 整体逆向报告 |
+| `docs/FINDINGS.md` | 逆向发现汇总 |
+| `docs/troyr2扫描报告.md` | 实测扫描报告 |
 
-### 测试
+### 测试（全部通过）
 
-| 文件 | 说明 |
+| 文件 | 覆盖 | 结果 |
+|---|---|---|
+| `test_ave_engine.py` | AVE 特征引擎真实调用 | 12/12 |
+| `test_nonpe_engine.py` | 非 PE 文件查杀 | 11/11 |
+| `test_qex_api.py` | QEX 引擎 API 级调用 | 13/13 |
+| `test_no_log_hallucination.py` | 证明判定不来自日志 | 8/8 |
+| `test_av360_sense.py` | 感知层回归（弹窗/查杀通知）| 通过 |
+| `test_false_negative.py` | **误报防护（不把无日志报成干净）** | 通过 |
+| `test_perception.py` | 感知通道实测 | 通过 |
+
+### 归档（`archive/`，不入库）
+
+| 目录 | 内容 |
 |---|---|
-| `test_av360_sense.py` | SDK 回归测试 |
-| `test_perception.py` | 感知通道实测 |
-
-### 逆向工具
-
-`rea_q.py` / `rea.cmd`（REA CLI 封装）、`eat.py`（导出表）、`guid.py`、
-`vftable.py` / `rtti_vftable.py`（虚表与 RTTI）、`decode_ioctl.py`、
-`pe_scan.py` / `static_deep.py`（静态分析）、`selfprotect_probe.py`、
-`query_intercept_state.py`、`probe_devices.ps1`
+| `archive/scripts/` | 探索期 Python 分析脚本（ScanCache 解密、PE 解析等 200+）|
+| `archive/ps1/` | 探索期 PowerShell 探测脚本（90+）|
+| `archive/data/` | 探索期数据与截图产物 |
 
 ---
 
