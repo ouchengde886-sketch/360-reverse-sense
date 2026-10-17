@@ -970,6 +970,83 @@ class AV360Sense:
         r["threats"] = self.scan_log_threats()
         return r
 
+    def scan_log_history(self, limit: int = 100) -> list[dict]:
+        """聚合**全部历史**扫描日志（不只是最近一条）。
+
+        360 每次扫描都会在 360ScanLog 目录下留一份带时间戳的日志，
+        但 `360safeScanLog.txt` 只保留最近一次。若只读后者，
+        一旦发生新扫描，上一次的结果就被覆盖 —— 免杀自动化里
+        "我刚扫的那次查到了什么" 会丢失。
+
+        本方法遍历目录下所有 ScanLog_*.txt，按时间倒序解析，
+        返回每次扫描的 {log, time, files, safe, threats, threat_list}。
+
+        参数 limit 限制返回的日志条数（按时间倒序取前 N 条）。
+        """
+        d = os.path.dirname(SCAN_LOG)
+        if not os.path.isdir(d):
+            return []
+        try:
+            names = [n for n in os.listdir(d)
+                     if n.startswith("ScanLog_") and n.endswith(".txt")]
+        except OSError:
+            return []
+        # 文件名形如 ScanLog_2026-10-18_02_41_52.txt，可直接按名排序
+        names.sort(reverse=True)
+        out = []
+        for n in names[:limit]:
+            full = os.path.join(d, n)
+            txt = _read_scan_log(full)
+            if not txt:
+                continue
+            rec = {"log": n, "path": full}
+            m = re.search(r"开始时间:\s*([\d\-: ]+)", txt)
+            if m:
+                rec["time"] = m.group(1).strip()
+            for key, pat in (
+                ("files", r"扫描文件数:\s*(\d+)"),
+                ("safe", r"安全的文件数:\s*(\d+)"),
+                ("threats", r"发现安全威胁:\s*(\d+)"),
+                ("handled", r"已处理安全威胁:\s*(\d+)"),
+            ):
+                m = re.search(pat, txt)
+                rec[key] = int(m.group(1)) if m else None
+            m = re.search(r"扫描类型:\s*(.+)", txt)
+            if m:
+                rec["scan_type"] = m.group(1).strip()
+            m = re.search(r"扫描引擎:\s*(.+)", txt)
+            if m:
+                rec["engines"] = m.group(1).strip()
+            m = re.search(r"扫描内容\s*-+\s*\r?\n(.+)", txt)
+            if m:
+                rec["target"] = m.group(1).strip()
+            rec["threat_list"] = self.scan_log_threats(full)
+            out.append(rec)
+        return out
+
+    def scan_log_threats_all(self) -> list[dict]:
+        """汇总全部历史日志中的威胁记录，按 (path, md5) 去重。
+
+        每条附加 `first_seen` / `last_seen`（来自日志文件名时间戳），
+        便于判断某个文件是"这次新查到的"还是"历史上就被标记过"。
+        """
+        seen: dict[tuple, dict] = {}
+        for rec in self.scan_log_history():
+            ts = rec.get("time") or rec.get("log", "")
+            for t in rec.get("threat_list", []):
+                key = (t["path"].lower(), t["md5"].lower())
+                if key in seen:
+                    seen[key]["last_seen"] = max(seen[key]["last_seen"], ts)
+                    seen[key]["first_seen"] = min(seen[key]["first_seen"], ts)
+                    seen[key]["hits"] += 1
+                else:
+                    d = dict(t)
+                    d["first_seen"] = ts
+                    d["last_seen"] = ts
+                    d["hits"] = 1
+                    seen[key] = d
+        return sorted(seen.values(), key=lambda x: x["last_seen"], reverse=True)
+
     def scan_log_files(self) -> list[str]:
         """列出全部历史扫描日志（按时间倒序）。"""
         d = os.path.join(APPDATA_360, "360ScanLog")
@@ -1216,6 +1293,12 @@ def main():
     sa.add_argument("files", nargs="+")
     sl = sub.add_parser("scan-log", help="读取 360 官方扫描结果（含引擎归属）")
     sl.add_argument("--json", action="store_true")
+    shist = sub.add_parser(
+        "scan-history",
+        help="聚合全部历史扫描日志中的威胁（不止最近一次）")
+    shist.add_argument("--json", action="store_true")
+    shist.add_argument("--limit", type=int, default=100,
+                       help="最多读取的日志条数（按时间倒序）")
     sh = sub.add_parser("handle", help="处理最近一次扫描发现的威胁")
     sh.add_argument("--action", default="quarantine",
                     choices=["quarantine", "delete", "rename", "none"])
@@ -1289,6 +1372,36 @@ def main():
                 for t in th:
                     print("  [%s] %s" % (t["engine"], t["verdict"]))
                     print("        %s" % t["path"])
+
+    elif args.cmd == "scan-history":
+        hist = s.scan_log_history(limit=args.limit)
+        ths = s.scan_log_threats_all()
+        if args.json:
+            print(json.dumps({"scans": hist, "threats": ths},
+                             ensure_ascii=False, indent=2))
+        else:
+            print("=" * 70)
+            print("360 历史扫描记录聚合")
+            print("=" * 70)
+            print("扫描记录: %d 条   唯一威胁: %d 个" % (len(hist), len(ths)))
+            real = [h for h in hist if h.get("time")]
+            print("其中含完整信息的: %d 条" % len(real))
+            print()
+            print("--- 有检出的扫描 ---")
+            for h in hist:
+                if h.get("threats"):
+                    print("  %s  [%s]  目标=%s"
+                          % (h.get("time"), h.get("scan_type"), h.get("target")))
+                    print("        文件=%s 安全=%s 威胁=%s"
+                          % (h.get("files"), h.get("safe"), h.get("threats")))
+            print()
+            print("--- 唯一威胁汇总（含首次/末次出现）---")
+            for t in ths:
+                print("  [%s] %s" % (t.get("engine"), t.get("verdict")))
+                print("        %s" % t.get("path"))
+                print("        md5=%s  命中=%d 次  首次=%s  末次=%s"
+                      % (t.get("md5"), t.get("hits"),
+                         t.get("first_seen"), t.get("last_seen")))
 
     elif args.cmd == "handle":
         r = s.handle_scan_log(action=args.action, quarantine_dir=args.dir,
