@@ -50,12 +50,21 @@ def main():
     os.makedirs(d, exist_ok=True)
 
     # ---------------------------------------------------------------- A
-    print("[A] ★ 未被占用时，PE 映像后缀仍应被拒绝（第 51 轮更正）")
-    print("    拦截与内容无关：空文件、1 字节、真实 PE 都一样被拒")
-    print("    可用后缀（非 PE 映像）应全部成功")
-    # PE 映像后缀：360FsFlt 微过滤驱动按扩展名拒绝
+    print("[A] PE 映像后缀的写入 —— 拦截是间歇性的，本段做归因而非断言")
+    print("    实测：同一台机器上，.exe 写入有时 5/5 被拒、有时 15/15 成功。")
+    print("    因此本段不硬断言'一定被拒'，而是记录本次观测并给出归因依据。")
+    print("    ★ 归因依据（拦截出现时的观测）：")
+    print("      - 拦截发生时：空/1字节/真实PE 写 .exe 全被拒（err=5），")
+    print("        而同一份 PE 写 .txt 成功 => 纯扩展名驱动，与内容无关")
+    print("      - 拦截发生时：8.3 短名、\\\\?\\ 长路径、大写 .EXE、a.txt.exe 全被拦")
+    print("      - 拦截发生时：driverquery 显示 360FsFlt/360Box64 为 File System 类型")
+    print("      - 拦截消失时：上述所有写法全部成功")
+    print("    => 结论：存在一条按扩展名拒绝 PE 映像写入的规则，由 360 的")
+    print("       文件系统微过滤驱动实现，但其**生效与否随时间变化**，")
+    print("       触发条件尚未确定（已排除：文件占用、引擎调用、目录位置、")
+    print("       FileMonAccess 取值）。")
+    # PE 映像后缀 vs 非 PE 后缀：无论如何，非 PE 后缀必须始终可写
     pe_exts = ["exe", "dll", "sys", "ocx", "scr", "cpl", "vbs"]
-    # 非 PE 映像后缀：应全部成功
     ok_exts = ["com", "bin", "dat", "tmp", "txt", "ps1", "log", "zip", "json"]
     pe_denied, pe_allowed = [], []
     for e in pe_exts:
@@ -68,8 +77,7 @@ def main():
             pe_denied.append(e)
         except Exception as ex:  # noqa: BLE001
             pe_denied.append("%s(%s)" % (e, type(ex).__name__))
-    check("PE 映像后缀全部被拒（%d 种）" % len(pe_exts),
-          not pe_allowed, "被放行=%s" % (pe_allowed or "无"))
+    print("      PE 后缀: 被拒=%s 放行=%s" % (pe_denied or "无", pe_allowed or "无"))
 
     ok_failed = []
     for e in ok_exts:
@@ -81,34 +89,46 @@ def main():
                 ok_failed.append(e + "(size)")
         except Exception as ex:  # noqa: BLE001
             ok_failed.append("%s(%s)" % (e, type(ex).__name__))
-    check("非 PE 后缀全部写入成功（%d 种）" % len(ok_exts),
+    check("非 PE 后缀始终可写（%d 种）" % len(ok_exts),
           not ok_failed, "失败=%s" % (ok_failed or "无"))
+    check(".com 始终可写（免杀落盘的关键绕过）",
+          "com" not in ok_failed, "com 在失败列表中=%s" % ("com" in ok_failed))
+    # 一致性：PE 后缀要么全被拒、要么全放行，不应出现部分拦截
+    check("PE 后缀的拦截是'全有或全无'（无部分拦截）",
+          len(pe_denied) == 0 or len(pe_allowed) == 0,
+          "被拒=%d 放行=%d" % (len(pe_denied), len(pe_allowed)))
     print()
 
     # ---------------------------------------------------------------- A2
-    print("[A2] ★ 拦截是文件名驱动，与内容无关（关键对照）")
+    print("[A2] 内容无关性：拦截生效时，只有扩展名决定成败")
+    print("    本段只验证'内容不影响结果'，不预设拦截是否生效。")
     cases = [
-        ("空内容 -> .exe", b"", "exe", True),
-        ("1 字节 -> .exe", b"A", "exe", True),
-        ("真实 PE -> .txt", data, "txt", False),
-        ("真实 PE -> .exe", data, "exe", True),
+        ("空内容 -> .exe", b"", "exe"),
+        ("1 字节 -> .exe", b"A", "exe"),
+        ("真实 PE -> .txt", data, "txt"),
+        ("真实 PE -> .exe", data, "exe"),
     ]
-    mismatch = []
-    for label, blob, ext, expect_denied in cases:
+    outcome = {}
+    for label, blob, ext in cases:
         p = os.path.join(d, "c_%s.%s" % (abs(hash(label)) % 10000, ext))
         denied = False
         try:
             with open(p, "wb") as f:
                 f.write(blob)
-        except PermissionError:
-            denied = True
         except Exception:  # noqa: BLE001
             denied = True
-        if denied != expect_denied:
-            mismatch.append("%s(实际%s)" % (label, "被拒" if denied else "成功"))
+        outcome[label] = denied
         print("      %-18s -> %s" % (label, "被拒" if denied else "成功"))
-    check("4 组内容/后缀对照全部符合预期", not mismatch,
-          "不符=%s" % (mismatch or "无"))
+    # 无论拦截是否生效，同一扩展名的结果必须一致（内容无关）
+    exe_results = {outcome["空内容 -> .exe"], outcome["1 字节 -> .exe"],
+                   outcome["真实 PE -> .exe"]}
+    check(".exe 的三种内容结果一致（证明与内容无关）",
+          len(exe_results) == 1,
+          "结果集合=%s" % exe_results)
+    # .txt 必须始终成功
+    check("真实 PE 写 .txt 始终成功",
+          outcome["真实 PE -> .txt"] is False,
+          "被拒=%s" % outcome["真实 PE -> .txt"])
     print()
 
     # ---------------------------------------------------------------- B
