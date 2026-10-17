@@ -238,10 +238,51 @@ class Event:
 # ---------------------------------------------------------------- 引擎调用
 
 def _run_ps32(script: str, *args, timeout=120):
+    """在 32 位 PowerShell 里跑辅助脚本并返回 stdout。
+
+    ★ 注意：PowerShell 在首次启动时可能把版权横幅写进 stdout
+    （实测在 `-File` 模式下也会出现），污染 JSON 解析。
+    这里统一剥掉横幅，只返回真正的输出。
+    """
     cmd = [PS32, "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", script, *args]
     p = subprocess.run(cmd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=timeout)
-    return p.stdout or ""
+    return _strip_ps_banner(p.stdout or "")
+
+
+# PowerShell 启动横幅的特征行（出现即丢弃该行及其之前的空行）
+_PS_BANNER_MARKS = (
+    "Windows PowerShell",
+    "Copyright (C) Microsoft Corporation",
+    "Install the latest PowerShell",
+    "Try the new cross-platform",
+    "https://aka.ms/pscore6",
+)
+
+
+def _strip_ps_banner(out: str) -> str:
+    """剥掉 PowerShell 启动横幅，返回真正的脚本输出。
+
+    实测：即使带 `-NoProfile -File`，PowerShell 仍可能输出
+    `Windows PowerShell` / `Copyright (C) Microsoft Corporation` 横幅，
+    导致调用方把横幅当成脚本返回值（例如把 "Windows PowerShell"
+    当成 rc 解析而失败）。
+    """
+    if not out:
+        return out
+    lines = out.splitlines()
+    # 找到最后一条横幅行的位置，丢弃它及其之前的内容
+    cut = -1
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if any(s.startswith(m) or m in s for m in _PS_BANNER_MARKS):
+            cut = i
+    if cut >= 0:
+        lines = lines[cut + 1:]
+    # 丢弃开头的空行
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return "\n".join(lines)
 
 
 def _read_scan_log(log: str) -> str:

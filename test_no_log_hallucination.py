@@ -59,8 +59,16 @@ def main():
 
     # ---------------------------------------------------------------- B
     print("[B] 日志中的旧威胁不得污染判定")
-    # 找一个日志里确实存在的威胁文件
+    # 找一个日志里确实存在的威胁文件。
+    # ★ 注意：360safeScanLog.txt 只保留最近一次扫描，若最近一次是空扫描
+    #   它就没有威胁记录。因此这里回退到历史日志聚合，避免测试
+    #   因为"最近一次扫描恰好没查到东西"而假失败。
     old = s.scan_log_threats()
+    if not old:
+        old = s.scan_log_threats_all()
+    # ★ 日志里的威胁文件可能已被 360 删除/隔离（实测 EICAR 就被删了），
+    #   因此要挑一个**当前仍存在**的，否则测试会因为"文件没了"而假失败。
+    old = [t for t in old if os.path.exists(t["path"])]
     if old:
         victim = old[0]["path"]
         if os.path.exists(victim):
@@ -81,7 +89,13 @@ def main():
 
     # ---------------------------------------------------------------- C
     print("[C] 判定必须可追溯到即时引擎返回值")
-    real = "C:\\Windows\\Sysnative\\notepad.exe"
+    # ★ 用 .com 副本而非 Sysnative\notepad.exe：
+    #   实测发现临时目录里的 notepad 副本启动后立即退出，
+    #   导致 AVE 拿到的是"进程正在终止"而非真实扫描结果。
+    #   改用系统原路径的 notepad.exe（实测稳定返回 status=0）。
+    real = "C:\\Windows\\System32\\notepad.exe"
+    if not os.path.exists(real):
+        real = "C:\\Windows\\Sysnative\\notepad.exe"
     rc = s.scan_all_engines(real)
     check("verdict 来自 ave 引擎",
           rc.get("verdict") == "clean" and rc["engines"]["ave"].get("status") == 0,

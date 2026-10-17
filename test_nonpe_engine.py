@@ -106,7 +106,13 @@ def main():
 
     # ---------------------------------------------------------------- 6
     print("[6] 真实威胁样本（360 官方判为木马的脚本）")
-    threats = [t for t in s.scan_log_threats() if os.path.exists(t["path"])]
+    # ★ 优先用最近一次日志；若它恰好是空扫描（360safeScanLog.txt 会被覆盖），
+    #   回退到历史聚合，避免测试因"最近一次没查到东西"而假失败。
+    src = s.scan_log_threats()
+    if not src:
+        src = s.scan_log_threats_all()
+    # 日志里的威胁文件可能已被 360 删除/隔离，只保留仍存在的
+    threats = [t for t in src if os.path.exists(t["path"])]
     if threats:
         okc = 0
         for t in threats:
